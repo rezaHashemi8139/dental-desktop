@@ -6,6 +6,7 @@
   "scripts": {
     "start": "pnpm tauri dev",
     "dev": "vite",
+    "product": "pnpm tauri build --bundles nsis",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri"
