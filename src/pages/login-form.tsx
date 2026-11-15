@@ -61,7 +61,7 @@ export function LoginForm({ initialUsername = "", notice, onLoggedIn }: LoginFor
         error={fieldError(errors.username)}
         autoComplete="username"
         autoFocus={!initialUsername}
-        dir="ltr"
+        latin
         {...register("username")}
       />
       <FormField
@@ -71,7 +71,7 @@ export function LoginForm({ initialUsername = "", notice, onLoggedIn }: LoginFor
         error={fieldError(errors.password)}
         autoComplete="current-password"
         autoFocus={!!initialUsername}
-        dir="ltr"
+        latin
         {...register("password")}
       />
 

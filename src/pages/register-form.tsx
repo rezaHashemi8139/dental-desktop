@@ -62,7 +62,7 @@ export function RegisterForm({ onRegistered }: RegisterFormProps) {
         error={fieldError(errors.username)}
         autoComplete="username"
         maxLength={32}
-        dir="ltr"
+        latin
         {...register("username")}
       />
       <FormField
@@ -72,7 +72,7 @@ export function RegisterForm({ onRegistered }: RegisterFormProps) {
         hint={t("auth.hints.password")}
         error={fieldError(errors.password)}
         autoComplete="new-password"
-        dir="ltr"
+        latin
         {...register("password")}
       />
       <FormField
@@ -81,7 +81,7 @@ export function RegisterForm({ onRegistered }: RegisterFormProps) {
         label={t("auth.fields.confirmPassword")}
         error={fieldError(errors.confirmPassword)}
         autoComplete="new-password"
-        dir="ltr"
+        latin
         {...register("confirmPassword")}
       />
 
