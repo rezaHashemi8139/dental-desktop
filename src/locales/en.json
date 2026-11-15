@@ -35,12 +35,15 @@
     },
     "hints": {
       "username": "3–32 characters: English letters, digits, dot, dash or underscore.",
-      "password": "At least 10 characters."
+      "password": "At least 8 characters, with a digit, a lowercase and an uppercase letter."
     },
     "validation": {
       "required": "Please fill in this field.",
       "usernameFormat": "Use 3–32 English letters, digits, dot, dash or underscore.",
-      "passwordLength": "The password must be at least 10 characters.",
+      "passwordLength": "The password must be at least 8 characters.",
+      "passwordDigit": "The password must contain at least one digit.",
+      "passwordLower": "The password must contain at least one lowercase letter (a-z).",
+      "passwordUpper": "The password must contain at least one uppercase letter (A-Z).",
       "passwordMismatch": "The passwords do not match."
     },
     "signUpSuccess": "Your account was created. You can log in now.",

@@ -47,4 +47,5 @@ export function logout(): Promise<void> {
 
 /** Same rules as the server (dental-server/internal/service/auth.go). */
 export const USERNAME_PATTERN = /^[A-Za-z0-9._-]{3,32}$/;
-export const MIN_PASSWORD_LENGTH = 10;
+/** Also needs a digit, a lowercase and an uppercase letter (src/auth/schemas.ts). */
+export const MIN_PASSWORD_LENGTH = 8;
