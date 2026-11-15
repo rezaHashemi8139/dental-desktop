@@ -3,6 +3,8 @@ use std::path::PathBuf;
 /// The API contract lives in the server repository. Override with DENTAL_PROTO_DIR
 /// if it is not checked out next to this one (../dental-server).
 const DEFAULT_PROTO_DIR: &str = "../../dental-server/proto";
+/// Protos the server's protos import from buf dependencies (see proto-vendor/protovalidate/README.md).
+const VENDOR_PROTO_DIR: &str = "proto-vendor/protovalidate";
 
 const PROTO_FILES: &[&str] = &[
     "dental/v1/auth.proto",
@@ -21,9 +23,10 @@ fn compile_protos() {
     println!("cargo:rerun-if-env-changed=DENTAL_PROTO_DIR");
     let proto_dir = PathBuf::from(std::env::var("DENTAL_PROTO_DIR").unwrap_or_else(|_| DEFAULT_PROTO_DIR.into()));
     println!("cargo:rerun-if-changed={}", proto_dir.display());
+    println!("cargo:rerun-if-changed={VENDOR_PROTO_DIR}");
 
     // protox is a pure-Rust protobuf compiler, so no protoc install is needed.
-    let descriptors = protox::compile(PROTO_FILES, [&proto_dir]).unwrap_or_else(|e| {
+    let descriptors = protox::compile(PROTO_FILES, [proto_dir.as_path(), VENDOR_PROTO_DIR.as_ref()]).unwrap_or_else(|e| {
         panic!("compiling protos from {} failed (set DENTAL_PROTO_DIR?): {e:?}", proto_dir.display())
     });
     prost_build::Config::new()

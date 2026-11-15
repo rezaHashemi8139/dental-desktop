@@ -100,6 +100,7 @@ fn server_error(code: &str, reason: &str) -> Message {
         "user_disabled" => err("auth.errors.userDisabled"),
         "not_a_member" => err("auth.errors.notAMember"),
         "username_taken" => err("auth.errors.usernameTaken"),
+        "weak_password" => err("auth.errors.weakPassword"),
         _ => Message::error("auth.errors.server", format!("{code}: {reason}")),
     }
 }

@@ -62,6 +62,7 @@
       "userDisabled": "This account has been disabled.",
       "notAMember": "This account has no access to this clinic. Ask the clinic's administrator to add you.",
       "usernameTaken": "This username is already taken.",
+      "weakPassword": "The password must be at least 8 characters, with a digit, a lowercase and an uppercase letter.",
       "server": "The server returned an error. ({{details}})",
       "serverUnreachable": "Could not connect to the server. Check your internet connection.",
       "setupNeedsInternet": "The first start needs an internet connection.",
