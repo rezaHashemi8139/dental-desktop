@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use crate::proto::{SealedBox, SignedOfflineGrant};
-use crate::secure::{self, KeyPair, KEY_LEN};
+use crate::secure::{self, KdfParams, KeyPair, KDF_PARAMS, KEY_LEN, LEGACY_KDF_PARAMS};
 
 pub const INSTALLATION_FILE: &str = "installation.json";
 pub const VAULT_FILE: &str = "vault.json";
@@ -130,6 +130,10 @@ pub struct VaultEntry {
     public_key: String,
     /// DPAPI(salt || nonce || XChaCha20-Poly1305(Argon2id(password), private key)).
     private_key: String,
+    /// The Argon2id settings `private_key` was encrypted with. Missing in entries
+    /// written before they were stored; those used the legacy settings.
+    #[serde(default = "legacy_kdf")]
+    kdf: KdfParams,
     /// The local-database key (version || key) sealed to `public_key`.
     database_key: String,
     /// The latest SignedOfflineGrant from the server (protobuf, base64).
@@ -203,13 +207,14 @@ impl Vault {
         let user_id = hex::encode(user_id);
         let aad = self.aad(&user_id);
         let pair = KeyPair::generate();
-        let private_key = secure::protect(&secure::encrypt_with_password(password, pair.secret_bytes().as_ref(), &aad))?;
+        let private_key = encrypt_private_key(&pair, password, &aad)?;
 
         let entry = VaultEntry {
             user_id: user_id.clone(),
             username: username.to_owned(),
             public_key: b64(&pair.public),
-            private_key: b64(&private_key),
+            private_key,
+            kdf: KDF_PARAMS,
             database_key: b64(&seal_database_key(&pair.public, database_key, &aad)),
             grant: b64(&grant.encode_to_vec()),
         };
@@ -234,9 +239,26 @@ impl Vault {
     pub fn unlock(&self, entry: &VaultEntry, password: &str) -> Result<KeyPair> {
         let protected = unb64(&entry.private_key, "private key")?;
         let encrypted = secure::unprotect(&protected)?;
-        let secret = secure::decrypt_with_password(password, &encrypted, &self.aad(&entry.user_id))?;
+        let secret = secure::decrypt_with_password(password, &entry.kdf, &encrypted, &self.aad(&entry.user_id))?;
         let secret: [u8; 32] = secret.as_slice().try_into().map_err(|_| VaultError::Corrupt("private key"))?;
         Ok(KeyPair::from_secret(secret))
+    }
+
+    /// After a successful offline login: if the user's entry was encrypted with
+    /// older Argon2id settings, encrypts it again with the current ones. The key
+    /// pair stays the same, so the sealed database key remains valid.
+    /// Returns whether anything changed (the caller saves the vault).
+    pub fn upgrade_password_settings(&mut self, user_id: &str, password: &str, pair: &KeyPair) -> Result<bool> {
+        let aad = self.aad(user_id);
+        let Some(entry) = self.users.iter_mut().find(|e| e.user_id == user_id) else {
+            return Ok(false);
+        };
+        if entry.kdf == KDF_PARAMS {
+            return Ok(false);
+        }
+        entry.private_key = encrypt_private_key(pair, password, &aad)?;
+        entry.kdf = KDF_PARAMS;
+        Ok(true)
     }
 
     pub fn database_key(&self, entry: &VaultEntry, pair: &KeyPair) -> Result<DatabaseKey> {
@@ -254,6 +276,16 @@ impl Vault {
     pub fn grant(&self, entry: &VaultEntry) -> Result<SignedOfflineGrant> {
         SignedOfflineGrant::decode(unb64(&entry.grant, "grant")?.as_slice()).map_err(|_| VaultError::Corrupt("grant"))
     }
+}
+
+fn legacy_kdf() -> KdfParams {
+    LEGACY_KDF_PARAMS
+}
+
+/// The `private_key` field: the secret encrypted with the password (KDF_PARAMS), then with DPAPI.
+fn encrypt_private_key(pair: &KeyPair, password: &str, aad: &[u8]) -> Result<String> {
+    let encrypted = secure::encrypt_with_password(password, pair.secret_bytes().as_ref(), aad);
+    Ok(b64(&secure::protect(&encrypted)?))
 }
 
 fn seal_database_key(public: &[u8; 32], database_key: &DatabaseKey, aad: &[u8]) -> Vec<u8> {
@@ -314,5 +346,41 @@ mod tests {
 
         // A vault from another installation is ignored.
         assert!(Vault::load(&dir, &[2; 16]).unwrap().find("doctor").is_none());
+    }
+
+    /// An entry saved before the Argon2id settings were stored (no "kdf" field)
+    /// still unlocks, and is moved to the current settings after a login.
+    #[test]
+    fn legacy_entry_unlocks_and_upgrades() {
+        let dir = temp_dir("legacy");
+        let mut vault = Vault::load(&dir, &[1; 16]).unwrap();
+        vault.upsert_user(&[10; 16], "doctor", "doctor-password", &grant(), &key(3, 0xCC)).unwrap();
+
+        // Rewrite the entry the way the old version did: legacy settings, no "kdf" field.
+        let user_id = vault.users[0].user_id.clone();
+        let pair = vault.unlock(&vault.users[0], "doctor-password").unwrap();
+        let old = secure::encrypt_with_password_using("doctor-password", &LEGACY_KDF_PARAMS, pair.secret_bytes().as_ref(), &vault.aad(&user_id));
+        vault.users[0].private_key = b64(&secure::protect(&old).unwrap());
+        vault.save().unwrap();
+        let mut json: serde_json::Value = serde_json::from_slice(&fs::read(dir.join(VAULT_FILE)).unwrap()).unwrap();
+        json["users"][0].as_object_mut().unwrap().remove("kdf");
+        fs::write(dir.join(VAULT_FILE), serde_json::to_vec(&json).unwrap()).unwrap();
+
+        let mut vault = Vault::load(&dir, &[1; 16]).unwrap();
+        let entry = vault.find("doctor").unwrap().clone();
+        assert_eq!(entry.kdf, LEGACY_KDF_PARAMS);
+        assert!(vault.unlock(&entry, "wrong-password").is_err());
+        let pair = vault.unlock(&entry, "doctor-password").unwrap();
+
+        assert!(vault.upgrade_password_settings(&user_id, "doctor-password", &pair).unwrap());
+        assert!(!vault.upgrade_password_settings(&user_id, "doctor-password", &pair).unwrap(), "already current");
+        vault.save().unwrap();
+
+        let vault = Vault::load(&dir, &[1; 16]).unwrap();
+        let entry = vault.find("doctor").unwrap();
+        assert_eq!(entry.kdf, KDF_PARAMS);
+        let pair = vault.unlock(entry, "doctor-password").unwrap();
+        let db_key = vault.database_key(entry, &pair).unwrap();
+        assert_eq!((db_key.version, db_key.key[0]), (3, 0xCC), "database key still opens after the upgrade");
     }
 }

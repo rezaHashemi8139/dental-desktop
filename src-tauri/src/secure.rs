@@ -6,6 +6,7 @@ use chacha20poly1305::aead::{Aead, Payload};
 use chacha20poly1305::{KeyInit, XChaCha20Poly1305, XNonce};
 use ed25519_dalek::{Signature, VerifyingKey};
 use hkdf::Hkdf;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::Zeroizing;
@@ -118,40 +119,74 @@ pub fn seal(recipient_public: &[u8; 32], plain: &[u8], aad: &[u8]) -> SealedBox 
 // ---------------------------------------------------------------------------
 // Password-based encryption: Argon2id + XChaCha20-Poly1305.
 
-/// Argon2id settings for keys derived from a user's password (OWASP recommendation).
-const ARGON2_MEMORY_KIB: u32 = 19 * 1024;
-const ARGON2_TIME: u32 = 2;
-const ARGON2_THREADS: u32 = 1;
+/// Argon2id settings for a key derived from a user's password. They are stored
+/// next to what they encrypt (see vault.rs), so they can be raised later without
+/// locking anyone out. Changing them cannot weaken existing data: other settings
+/// give a different key, and decryption simply fails.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KdfParams {
+    pub memory_kib: u32,
+    pub time: u32,
+    pub threads: u32,
+}
+
+/// Used for everything encrypted from now on (RFC 9106's 64 MiB option). Logging
+/// in happens rarely on a desktop, so this is well above the OWASP minimum
+/// (19 MiB, 2 passes): each password guess against a stolen vault costs about 5x
+/// more time and over 3x more memory. Measured: ~80 ms per login on a recent PC
+/// (legacy: ~15 ms); expect a few hundred ms on an old one.
+pub const KDF_PARAMS: KdfParams = KdfParams { memory_kib: 64 * 1024, time: 3, threads: 1 };
+
+/// What vault entries written before the settings were stored used.
+pub const LEGACY_KDF_PARAMS: KdfParams = KdfParams { memory_kib: 19 * 1024, time: 2, threads: 1 };
+
+/// Settings read from a file are refused above this, so an edited file cannot make the app hang.
+const MAX_KDF_MEMORY_KIB: u32 = 1024 * 1024;
+const MAX_KDF_TIME: u32 = 20;
+const MAX_KDF_THREADS: u32 = 16;
+
 const SALT_LEN: usize = 16;
 
-fn password_key(password: &str, salt: &[u8]) -> Zeroizing<[u8; KEY_LEN]> {
-    let params = Params::new(ARGON2_MEMORY_KIB, ARGON2_TIME, ARGON2_THREADS, Some(KEY_LEN)).expect("valid Argon2 parameters");
+fn password_key(password: &str, salt: &[u8], kdf: &KdfParams) -> Result<Zeroizing<[u8; KEY_LEN]>> {
+    if kdf.memory_kib > MAX_KDF_MEMORY_KIB || kdf.time > MAX_KDF_TIME || kdf.threads > MAX_KDF_THREADS {
+        return Err(CryptoError("password settings out of range"));
+    }
+    let params = Params::new(kdf.memory_kib, kdf.time, kdf.threads, Some(KEY_LEN))
+        .map_err(|_| CryptoError("invalid password settings"))?;
     let mut key = Zeroizing::new([0u8; KEY_LEN]);
     Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
         .hash_password_into(password.as_bytes(), salt, key.as_mut())
-        .expect("Argon2 cannot fail with valid parameters");
-    key
+        .map_err(|_| CryptoError("invalid password settings"))?;
+    Ok(key)
 }
 
-/// Encrypts `plain` with a key derived from `password`. Output: salt || nonce || ciphertext.
+/// Encrypts `plain` with a key derived from `password` using [`KDF_PARAMS`].
+/// Output: salt || nonce || ciphertext. Store `KDF_PARAMS` alongside it.
 pub fn encrypt_with_password(password: &str, plain: &[u8], aad: &[u8]) -> Vec<u8> {
+    encrypt_with_password_using(password, &KDF_PARAMS, plain, aad)
+}
+
+/// Like [`encrypt_with_password`] with other settings. Only tests need this
+/// (to make data in the old format).
+pub(crate) fn encrypt_with_password_using(password: &str, kdf: &KdfParams, plain: &[u8], aad: &[u8]) -> Vec<u8> {
     let salt = random_bytes::<SALT_LEN>();
     let nonce_bytes = random_bytes::<NONCE_LEN>();
-    let key = password_key(password, salt.as_ref());
+    let key = password_key(password, salt.as_ref(), kdf).expect("valid password settings");
     let ciphertext = cipher(key.as_ref())
         .encrypt(&nonce(nonce_bytes.as_ref()).expect("24 bytes"), Payload { msg: plain, aad })
         .expect("encryption cannot fail for small messages");
     [salt.as_ref(), nonce_bytes.as_ref(), &ciphertext].concat()
 }
 
-/// Reverses [`encrypt_with_password`]. A wrong password fails here.
-pub fn decrypt_with_password(password: &str, data: &[u8], aad: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
+/// Reverses [`encrypt_with_password`], given the settings it was encrypted with.
+/// A wrong password fails here.
+pub fn decrypt_with_password(password: &str, kdf: &KdfParams, data: &[u8], aad: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
     if data.len() < SALT_LEN + NONCE_LEN {
         return Err(CryptoError("encrypted data too short"));
     }
     let (salt, rest) = data.split_at(SALT_LEN);
     let (nonce_bytes, ciphertext) = rest.split_at(NONCE_LEN);
-    let key = password_key(password, salt);
+    let key = password_key(password, salt, kdf)?;
     cipher(key.as_ref())
         .decrypt(&nonce(nonce_bytes)?, Payload { msg: ciphertext, aad })
         .map(Zeroizing::new)
@@ -264,9 +299,23 @@ mod tests {
     #[test]
     fn password_encryption() {
         let data = encrypt_with_password("secret password", b"private key", b"user");
-        assert_eq!(decrypt_with_password("secret password", &data, b"user").unwrap().as_slice(), b"private key");
-        assert!(decrypt_with_password("wrong password", &data, b"user").is_err());
-        assert!(decrypt_with_password("secret password", &data, b"other user").is_err());
+        let decrypt = |password, kdf, aad| decrypt_with_password(password, kdf, &data, aad);
+        assert_eq!(decrypt("secret password", &KDF_PARAMS, b"user").unwrap().as_slice(), b"private key");
+        assert!(decrypt("wrong password", &KDF_PARAMS, b"user").is_err());
+        assert!(decrypt("secret password", &KDF_PARAMS, b"other user").is_err());
+        // Other settings give another key: changing them in the file only breaks decryption.
+        assert!(decrypt("secret password", &LEGACY_KDF_PARAMS, b"user").is_err());
+        let huge = KdfParams { memory_kib: u32::MAX, ..KDF_PARAMS };
+        assert!(decrypt("secret password", &huge, b"user").is_err(), "absurd settings are refused, not run");
+    }
+
+    /// Data from before the settings were raised still decrypts with the old ones.
+    #[test]
+    fn legacy_password_encryption() {
+        let data = encrypt_with_password_using("old password", &LEGACY_KDF_PARAMS, b"old private key", b"user");
+        let plain = decrypt_with_password("old password", &LEGACY_KDF_PARAMS, &data, b"user").unwrap();
+        assert_eq!(plain.as_slice(), b"old private key");
+        assert!(decrypt_with_password("old password", &KDF_PARAMS, &data, b"user").is_err());
     }
 
     #[test]

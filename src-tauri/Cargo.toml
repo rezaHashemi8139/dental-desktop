@@ -46,3 +46,11 @@ x25519-dalek = { version = "3.0.0", features = ["static_secrets"] }
 windows-sys = { version = "0.61.2", features = ["Win32_Security_Cryptography", "Win32_Foundation"] }
 winreg = "0.56.0"
 
+
+# Argon2 is deliberately expensive (see secure.rs). Unoptimized it is many times
+# slower, so it is optimized in debug builds too: offline login and tests stay quick.
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3

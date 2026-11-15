@@ -361,6 +361,10 @@ fn login_offline(ctx: &Context, installation: &Installation, username: &str, pas
     let role = localdb::record_login(&db, &grant.user_id, &grant.username, &grant.full_name, localdb::ROLE_STAFF, now)
         .map_err(internal)?;
 
+    // Entries from before the stronger password settings are upgraded on first use.
+    if let Err(e) = vault.upgrade_password_settings(&entry.user_id, password, &pair) {
+        eprintln!("Could not upgrade the password settings of {}: {e}", entry.username);
+    }
     vault.latest_seen = vault.latest_seen.max(now);
     vault.save().map_err(internal)?;
     clock::save_registry_last_seen(now);
