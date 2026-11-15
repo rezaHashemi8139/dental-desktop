@@ -3,7 +3,8 @@
     "code": "en",
     "name": "English",
     "abbr": "EN",
-    "dir": "ltr"
+    "dir": "ltr",
+    "version": 1
   },
   "app": {
     "title": "Welcome to Smart Management Base",
@@ -11,12 +12,41 @@
   },
   "greet": {
     "placeholder": "Enter a name...",
-    "button": "Greet"
+    "button": "Greet",
+    "message": "Hello, {{name}}! You've been greeted from Rust!"
   },
   "database": {
-    "testConnection": "Test Database Connection"
+    "testConnection": "Test Database Connection",
+    "connected": "Successfully connected to the database!"
   },
   "language": {
-    "label": "Language"
+    "label": "Language",
+    "manage": "Manage languages..."
+  },
+  "languageManager": {
+    "title": "Languages",
+    "description": "Download more languages or remove the ones you don't need.",
+    "installed": "Installed",
+    "available": "Available to download",
+    "builtIn": "Built-in",
+    "active": "Active",
+    "install": "Download",
+    "update": "Update",
+    "remove": "Remove",
+    "activeCannotBeRemoved": "The language in use cannot be removed. Switch to another language first.",
+    "builtInCannotBeRemoved": "Built-in languages cannot be removed.",
+    "loading": "Loading the language list...",
+    "noneAvailable": "No other languages are available right now.",
+    "retry": "Try again"
+  },
+  "errors": {
+    "unknown": "Something went wrong: {{details}}",
+    "database": "Database error: {{details}}",
+    "network": "Could not connect to the server. Check your internet connection. ({{details}})",
+    "languageServer": "The language server returned an error (code {{status}}).",
+    "invalidCatalog": "The language list from the server is not valid. ({{details}})",
+    "invalidLanguageFile": "The downloaded language file is not valid. ({{details}})",
+    "invalidLanguageCode": "\"{{code}}\" is not a valid language code.",
+    "fileSystem": "Could not read or save the file. ({{details}})"
   }
 }

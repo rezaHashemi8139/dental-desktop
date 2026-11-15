@@ -3,7 +3,8 @@
     "code": "fa",
     "name": "فارسی",
     "abbr": "FA",
-    "dir": "rtl"
+    "dir": "rtl",
+    "version": 1
   },
   "app": {
     "title": "به Smart Management Base خوش آمدید",
@@ -11,12 +12,41 @@
   },
   "greet": {
     "placeholder": "یک نام وارد کنید...",
-    "button": "سلام کن"
+    "button": "سلام کن",
+    "message": "سلام {{name}}! این پیام از سمت Rust آمده است!"
   },
   "database": {
-    "testConnection": "تست اتصال به پایگاه داده"
+    "testConnection": "تست اتصال به پایگاه داده",
+    "connected": "اتصال به پایگاه داده با موفقیت برقرار شد!"
   },
   "language": {
-    "label": "زبان"
+    "label": "زبان",
+    "manage": "مدیریت زبان‌ها..."
+  },
+  "languageManager": {
+    "title": "زبان‌ها",
+    "description": "زبان‌های بیشتری دانلود کنید یا زبان‌هایی را که لازم ندارید حذف کنید.",
+    "installed": "نصب‌شده",
+    "available": "قابل دانلود",
+    "builtIn": "پیش‌فرض",
+    "active": "فعال",
+    "install": "دانلود",
+    "update": "به‌روزرسانی",
+    "remove": "حذف",
+    "activeCannotBeRemoved": "زبانی که در حال استفاده است حذف نمی‌شود. اول به زبان دیگری بروید.",
+    "builtInCannotBeRemoved": "زبان‌های پیش‌فرض برنامه حذف نمی‌شوند.",
+    "loading": "در حال دریافت فهرست زبان‌ها...",
+    "noneAvailable": "فعلاً زبان دیگری برای دانلود وجود ندارد.",
+    "retry": "تلاش دوباره"
+  },
+  "errors": {
+    "unknown": "مشکلی پیش آمد: {{details}}",
+    "database": "خطای پایگاه داده: {{details}}",
+    "network": "اتصال به سرور برقرار نشد. اینترنت را بررسی کنید. ({{details}})",
+    "languageServer": "سرور زبان‌ها خطا برگرداند (کد {{status}}).",
+    "invalidCatalog": "فهرست زبان‌هایی که از سرور آمد معتبر نیست. ({{details}})",
+    "invalidLanguageFile": "فایل زبان دانلودشده معتبر نیست. ({{details}})",
+    "invalidLanguageCode": "«{{code}}» کد زبان معتبری نیست.",
+    "fileSystem": "خواندن یا ذخیره‌ی فایل انجام نشد. ({{details}})"
   }
 }

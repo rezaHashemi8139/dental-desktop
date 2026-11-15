@@ -1,0 +1,52 @@
+{
+  "_meta": {
+    "code": "de",
+    "name": "Deutsch",
+    "abbr": "DE",
+    "dir": "ltr",
+    "version": 1
+  },
+  "app": {
+    "title": "Willkommen bei Smart Management Base",
+    "subtitle": "Verwaltung für Zahnarztpraxen"
+  },
+  "greet": {
+    "placeholder": "Namen eingeben...",
+    "button": "Begrüßen",
+    "message": "Hallo, {{name}}! Rust lässt grüßen!"
+  },
+  "database": {
+    "testConnection": "Datenbankverbindung testen",
+    "connected": "Verbindung zur Datenbank erfolgreich hergestellt!"
+  },
+  "language": {
+    "label": "Sprache",
+    "manage": "Sprachen verwalten..."
+  },
+  "languageManager": {
+    "title": "Sprachen",
+    "description": "Laden Sie weitere Sprachen herunter oder entfernen Sie nicht benötigte.",
+    "installed": "Installiert",
+    "available": "Zum Herunterladen verfügbar",
+    "builtIn": "Integriert",
+    "active": "Aktiv",
+    "install": "Herunterladen",
+    "update": "Aktualisieren",
+    "remove": "Entfernen",
+    "activeCannotBeRemoved": "Die verwendete Sprache kann nicht entfernt werden. Wechseln Sie zuerst zu einer anderen Sprache.",
+    "builtInCannotBeRemoved": "Integrierte Sprachen können nicht entfernt werden.",
+    "loading": "Sprachliste wird geladen...",
+    "noneAvailable": "Derzeit sind keine weiteren Sprachen verfügbar.",
+    "retry": "Erneut versuchen"
+  },
+  "errors": {
+    "unknown": "Etwas ist schiefgelaufen: {{details}}",
+    "database": "Datenbankfehler: {{details}}",
+    "network": "Keine Verbindung zum Server. Prüfen Sie Ihre Internetverbindung. ({{details}})",
+    "languageServer": "Der Sprachserver hat einen Fehler gemeldet (Code {{status}}).",
+    "invalidCatalog": "Die Sprachliste vom Server ist ungültig. ({{details}})",
+    "invalidLanguageFile": "Die heruntergeladene Sprachdatei ist ungültig. ({{details}})",
+    "invalidLanguageCode": "„{{code}}“ ist kein gültiger Sprachcode.",
+    "fileSystem": "Die Datei konnte nicht gelesen oder gespeichert werden. ({{details}})"
+  }
+}

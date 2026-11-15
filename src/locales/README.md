@@ -1,15 +1,23 @@
 # Translations
 
-Each `.json` file in this folder is one language. The app finds them automatically:
-drop a new file in and it appears in the language menu with its name and abbreviation.
+Each `.json` file is one language and describes itself in its `_meta` section
+(code, full name, abbreviation, direction, version). There are two ways to ship one:
+
+- **Built into the app:** put the file in this folder. It is always available and cannot be removed.
+- **Downloadable:** put the file on the language server (see `languages-server/README.md`).
+  Users download it from *Language → Manage languages...* and can remove it again,
+  except for the language they are using.
+
+Any text missing from a file falls back to English, so a partial translation still works.
+
+Text coming from Rust is translated here too: Rust sends a key such as
+`greet.message` plus values, never finished text (see `src-tauri/src/message.rs`).
 
 ## Adding a language
 
 1. Give `en.json` to an AI with the prompt below (replace the language).
-2. Save the result here as `<code>.json`, e.g. `de.json`, `ar.json`, `tr.json`.
-3. Restart `pnpm start` (or just save — the dev server reloads).
-
-Any text missing from a file falls back to English, so a partial translation still works.
+2. Save the result as `<code>.json`, e.g. `de.json`, `ar.json`, `tr.json`,
+   in this folder or on the language server.
 
 ## Prompt for the AI
 
@@ -26,6 +34,7 @@ Rules:
   - "name": the language's name written in that language (e.g. "Deutsch")
   - "abbr": a short uppercase label (e.g. "DE")
   - "dir": "rtl" for right-to-left scripts (Arabic, Persian, Hebrew, Urdu), otherwise "ltr"
+  - "version": 1
 - This is a dental clinic management app: use the standard terms a clinic in that country would use.
 ```
 
