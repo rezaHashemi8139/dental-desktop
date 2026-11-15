@@ -86,6 +86,12 @@
     "label": "Language",
     "manage": "Manage languages..."
   },
+  "theme": {
+    "label": "Theme",
+    "system": "Same as system",
+    "light": "Light",
+    "dark": "Dark"
+  },
   "languageManager": {
     "title": "Languages",
     "description": "Download more languages or remove the ones you don't need.",

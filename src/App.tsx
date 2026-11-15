@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { connectionStatus, currentSession, type ConnectionMode, type Session } from "@/auth/session";
 import { LanguageSwitcher } from "@/components/language-switcher";
+import { ThemeSwitcher } from "@/components/theme-switcher";
 import { AuthPage } from "@/pages/auth-page";
 import { HomePage } from "@/pages/home-page";
 
@@ -39,7 +40,10 @@ function App() {
           </h1>
           <p className="text-xs text-muted-foreground">{t("app.subtitle")}</p>
         </div>
-        <LanguageSwitcher />
+        <div className="flex items-center gap-2">
+          <ThemeSwitcher />
+          <LanguageSwitcher />
+        </div>
       </header>
 
       <main className="flex flex-1 items-center justify-center p-6">

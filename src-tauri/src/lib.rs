@@ -71,6 +71,18 @@ pub fn run() {
                 ctx: Context::new(data_dir, api::Api::new(server_url)),
                 session: Mutex::new(None),
             });
+
+            // The window starts hidden and the frontend shows it once its splash is drawn
+            // (src/main.tsx). If the frontend fails to load, show it anyway rather than
+            // leave a running app with no window.
+            if let Some(window) = app.get_webview_window("main") {
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(5));
+                    if !window.is_visible().unwrap_or(true) {
+                        let _ = window.show();
+                    }
+                });
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
