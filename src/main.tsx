@@ -2,7 +2,9 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { initI18n } from "./i18n";
-import App from "./App";
+import { RouterProvider } from "@tanstack/react-router";
+import { loadSession } from "./auth/store";
+import { router } from "./router";
 import { DirectionProvider } from "./i18n/direction-provider";
 import { initTheme } from "./theme/theme";
 import { lockDown } from "./lib/lockdown";
@@ -22,12 +24,13 @@ requestAnimationFrame(() =>
   }),
 );
 
-// Languages (including downloaded ones) must be loaded before the first render.
-initI18n().then(() => {
+// Languages (including downloaded ones) and the current login must be known
+// before the first render: the router's guards decide the first page from them.
+Promise.all([initI18n(), loadSession()]).then(() => {
   ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     <React.StrictMode>
       <DirectionProvider>
-        <App />
+        <RouterProvider router={router} />
       </DirectionProvider>
     </React.StrictMode>,
   );

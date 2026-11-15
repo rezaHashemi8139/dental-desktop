@@ -1,14 +1,20 @@
 import { useState } from "react";
+import { getRouteApi, useNavigate } from "@tanstack/react-router";
 import { CloudIcon, CloudOffIcon, LogOutIcon, ShieldCheckIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { logout, type Session } from "@/auth/session";
+import { logout } from "@/auth/session";
+import { setSession } from "@/auth/store";
 import { useLanguage } from "@/i18n/use-language";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 
-export function HomePage({ session, onLoggedOut }: { session: Session; onLoggedOut: () => void }) {
+const appRoute = getRouteApi("/app");
+
+export function HomePage() {
   const { t } = useTranslation();
+  const { session } = appRoute.useRouteContext();
+  const navigate = useNavigate();
   const { language } = useLanguage();
   const [busy, setBusy] = useState(false);
 
@@ -24,7 +30,9 @@ export function HomePage({ session, onLoggedOut }: { session: Session; onLoggedO
     try {
       await logout();
     } finally {
-      onLoggedOut();
+      // Clear first: the /login guard sends logged-in users back to /home.
+      setSession(null);
+      navigate({ to: "/login", replace: true });
     }
   }
 
