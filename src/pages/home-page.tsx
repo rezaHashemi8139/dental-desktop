@@ -4,7 +4,7 @@ import { CloudIcon, CloudOffIcon, LogOutIcon, ShieldCheckIcon } from "lucide-rea
 import { useTranslation } from "react-i18next";
 import { logout } from "@/auth/session";
 import { setSession } from "@/auth/store";
-import { useLanguage } from "@/i18n/use-language";
+import { useFormatDate } from "@/i18n/calendar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,13 +15,11 @@ export function HomePage() {
   const { t } = useTranslation();
   const { session } = appRoute.useRouteContext();
   const navigate = useNavigate();
-  const { language } = useLanguage();
+  const formatDate = useFormatDate();
   const [busy, setBusy] = useState(false);
 
-  // Dates follow the selected language (Persian uses the Persian calendar).
-  const offlineUntil = new Intl.DateTimeFormat(language.code, { dateStyle: "medium", timeStyle: "short" }).format(
-    new Date(session.offlineUntil * 1000),
-  );
+  // In the language and calendar chosen in the header.
+  const offlineUntil = formatDate(session.offlineUntil * 1000, { dateStyle: "medium", timeStyle: "short" });
   const roleKey = `roles.${session.role}`;
   const role = (t as unknown as (key: string, options: object) => string)(roleKey, { defaultValue: session.role });
 

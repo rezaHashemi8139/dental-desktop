@@ -75,9 +75,9 @@ function insertText(input: HTMLInputElement, text: string) {
   input.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
-/** Persian and Arabic-Indic digits → 0-9 (for pasted text, which has no physical keys). */
+/** Persian (U+06F0-06F9) and Arabic-Indic (U+0660-0669) digits → 0-9 (for pasted text, which has no physical keys). */
 function latinDigits(text: string): string {
-  return text.replace(/[۰-۹٠-٩]/g, (d) => String((d.charCodeAt(0) & 0xf) % 10));
+  return text.replace(/[\u06f0-\u06f9\u0660-\u0669]/g, (d) => String(d.charCodeAt(0) & 0xf));
 }
 
 export function latinKeyDown(event: KeyboardEvent<HTMLInputElement>) {

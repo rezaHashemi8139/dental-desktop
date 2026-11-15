@@ -1,5 +1,6 @@
 import { Outlet } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
+import { CalendarSwitcher } from "@/components/calendar-switcher";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { ThemeSwitcher } from "@/components/theme-switcher";
 
@@ -17,6 +18,7 @@ export function RootLayout() {
         </div>
         <div className="flex items-center gap-2">
           <ThemeSwitcher />
+          <CalendarSwitcher />
           <LanguageSwitcher />
         </div>
       </header>
