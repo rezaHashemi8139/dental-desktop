@@ -1,12 +1,20 @@
 import { useState } from "react";
-import reactLogo from "./assets/react.svg";
 import { invoke } from "@tauri-apps/api/core";
-import "./App.css";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 
 function App() {
   const [greetMsg, setGreetMsg] = useState("");
   const [name, setName] = useState("");
   const [testDbMsg, setTestDbMsg] = useState("");
+
   async function greet() {
     // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
     setGreetMsg(await invoke("greet", { name }));
@@ -22,39 +30,37 @@ function App() {
   }
 
   return (
-    <main className="container">
-      <h1>Welcome to Smart Management Base</h1>
+    <main className="flex min-h-svh items-center justify-center p-6">
+      <Card className="w-full max-w-md">
+        <CardHeader>
+          <CardTitle>Welcome to Smart Management Base</CardTitle>
+          <CardDescription>Tauri + React + shadcn/ui</CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4">
+          <form
+            className="flex gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              greet();
+            }}
+          >
+            <Input
+              id="greet-input"
+              onChange={(e) => setName(e.currentTarget.value)}
+              placeholder="Enter a name..."
+            />
+            <Button type="submit">Greet</Button>
+          </form>
+          {greetMsg && <p className="text-sm">{greetMsg}</p>}
 
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <button onClick={testDb}>Test Database Connection</button>
-      <p>{greetMsg}</p>
-      <p>{testDbMsg}</p>
+          <Button variant="outline" onClick={testDb}>
+            Test Database Connection
+          </Button>
+          {testDbMsg && (
+            <p className="text-sm text-muted-foreground">{testDbMsg}</p>
+          )}
+        </CardContent>
+      </Card>
     </main>
   );
 }
