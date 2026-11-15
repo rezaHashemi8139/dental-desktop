@@ -1,0 +1,30 @@
+/* Splash shown until React replaces the contents of #root (see index.html).
+   Plain CSS: the app's styles are not loaded yet. This file is not in a Tailwind
+   layer, so it wins over the app's base styles: only set what the app sets the same way. */
+html, body { margin: 0; background: #ffffff; }        /* = --background (light) */
+html.dark, html.dark body { background: #0a0a0a; }    /* = --background (dark) */
+
+.splash {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  color: #737373;
+  font: 600 15px system-ui, "Segoe UI", sans-serif;
+  letter-spacing: 0.02em;
+}
+html.dark .splash { color: #a1a1a1; }
+
+.splash-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  opacity: 0.6;
+  animation: splash-spin 0.8s linear infinite;
+}
+@keyframes splash-spin { to { transform: rotate(360deg); } }

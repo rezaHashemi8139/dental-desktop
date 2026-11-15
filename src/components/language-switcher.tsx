@@ -35,8 +35,8 @@ export function LanguageSwitcher() {
           <DropdownMenuRadioGroup value={language.code} onValueChange={setLanguage}>
             {languages.map((item) => (
               <DropdownMenuRadioItem key={item.code} value={item.code} dir={item.dir}>
-                <span className="flex-1">{item.name}</span>
-                <span className="text-xs text-muted-foreground">{item.abbr}</span>
+                <span className="flex-1 whitespace-nowrap">{item.name}</span>
+                <span className="ms-4 text-xs text-muted-foreground">{item.abbr}</span>
               </DropdownMenuRadioItem>
             ))}
           </DropdownMenuRadioGroup>
