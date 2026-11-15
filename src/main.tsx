@@ -5,10 +5,12 @@ import { initI18n } from "./i18n";
 import App from "./App";
 import { DirectionProvider } from "./i18n/direction-provider";
 import { initTheme } from "./theme/theme";
+import { lockDown } from "./lib/lockdown";
 import "./index.css";
 
 // Before anything is drawn, so the page never flashes in the wrong colors.
 initTheme();
+lockDown();
 
 // The window starts hidden (tauri.conf.json) so the empty white web view is never
 // seen. Show it once the splash in index.html has been painted.

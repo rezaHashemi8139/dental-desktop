@@ -4,6 +4,7 @@ mod clock;
 mod device;
 mod languages;
 mod localdb;
+mod lockdown;
 mod message;
 mod proto;
 mod secure;
@@ -60,6 +61,15 @@ async fn logout(state: State<'_, AuthState>) -> Result<(), Message> {
     Ok(())
 }
 
+/// Debug builds only: F12 opens DevTools (the browser's own shortcut is off, see lockdown.rs).
+#[tauri::command]
+fn open_devtools(window: tauri::WebviewWindow) {
+    #[cfg(debug_assertions)]
+    window.open_devtools();
+    #[cfg(not(debug_assertions))]
+    let _ = window;
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -76,6 +86,7 @@ pub fn run() {
             // (src/main.tsx). If the frontend fails to load, show it anyway rather than
             // leave a running app with no window.
             if let Some(window) = app.get_webview_window("main") {
+                lockdown::apply(&window);
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_secs(5));
                     if !window.is_visible().unwrap_or(true) {
@@ -91,6 +102,7 @@ pub fn run() {
             sign_up,
             login,
             logout,
+            open_devtools,
             languages::get_language_catalog,
             languages::list_installed_languages,
             languages::install_language,

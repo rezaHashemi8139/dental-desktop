@@ -128,6 +128,17 @@
     }
   html {
     @apply font-sans;
+    /* An app, not a web page: text can't be selected or dragged, except where the user types. */
+    user-select: none;
+    -webkit-user-select: none;
+    cursor: default;
+    }
+  input, textarea, [contenteditable="true"] {
+    user-select: text;
+    -webkit-user-select: text;
+    }
+  img, a {
+    -webkit-user-drag: none;
     }
 }
 /* Scrollbars: thin, rounded and the same on every OS and in every scrollable area.

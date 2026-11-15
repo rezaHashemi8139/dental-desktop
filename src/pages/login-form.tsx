@@ -1,8 +1,12 @@
-import { useState, type FormEvent } from "react";
+import { useState } from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { LoaderCircleIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { login, type Session } from "@/auth/session";
+import { loginSchema, type LoginValues } from "@/auth/schemas";
 import { toRustMessage, translateMessage, type RustMessage } from "@/i18n/message";
+import { fieldError } from "@/lib/form";
 import { FormField } from "@/components/form-field";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -15,28 +19,31 @@ interface LoginFormProps {
 
 export function LoginForm({ initialUsername = "", notice, onLoggedIn }: LoginFormProps) {
   const { t } = useTranslation();
-  const [username, setUsername] = useState(initialUsername);
-  const [password, setPassword] = useState("");
   const [error, setError] = useState<RustMessage | null>(null);
-  const [busy, setBusy] = useState(false);
+  const {
+    register,
+    handleSubmit,
+    resetField,
+    setFocus,
+    formState: { errors, isSubmitting },
+  } = useForm<LoginValues>({
+    resolver: zodResolver(loginSchema),
+    defaultValues: { username: initialUsername, password: "" },
+  });
 
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    if (busy) return;
-    setBusy(true);
+  async function submit(values: LoginValues) {
     setError(null);
     try {
-      onLoggedIn(await login(username, password));
+      onLoggedIn(await login(values.username, values.password));
     } catch (e) {
       setError(toRustMessage(e));
-      setPassword("");
-    } finally {
-      setBusy(false);
+      resetField("password");
+      setFocus("password");
     }
   }
 
   return (
-    <form className="flex flex-col gap-4" onSubmit={submit} noValidate>
+    <form className="flex flex-col gap-4" onSubmit={handleSubmit(submit)} noValidate>
       {notice && !error && (
         <Alert>
           <AlertDescription>{notice}</AlertDescription>
@@ -51,28 +58,26 @@ export function LoginForm({ initialUsername = "", notice, onLoggedIn }: LoginFor
       <FormField
         id="login-username"
         label={t("auth.fields.username")}
-        value={username}
-        onChange={(e) => setUsername(e.currentTarget.value)}
+        error={fieldError(errors.username)}
         autoComplete="username"
         autoFocus={!initialUsername}
         dir="ltr"
-        required
+        {...register("username")}
       />
       <FormField
         id="login-password"
         type="password"
         label={t("auth.fields.password")}
-        value={password}
-        onChange={(e) => setPassword(e.currentTarget.value)}
+        error={fieldError(errors.password)}
         autoComplete="current-password"
         autoFocus={!!initialUsername}
         dir="ltr"
-        required
+        {...register("password")}
       />
 
-      <Button type="submit" disabled={busy || !username || !password}>
-        {busy && <LoaderCircleIcon className="animate-spin" />}
-        {busy ? t("auth.login.working") : t("auth.login.submit")}
+      <Button type="submit" disabled={isSubmitting}>
+        {isSubmitting && <LoaderCircleIcon className="animate-spin" />}
+        {isSubmitting ? t("auth.login.working") : t("auth.login.submit")}
       </Button>
     </form>
   );
