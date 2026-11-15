@@ -17,6 +17,8 @@ use crate::proto;
 const TIMEOUT: Duration = Duration::from_secs(15);
 /// The connection check should not keep the user waiting long when the server is down.
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(5);
+/// Logging out is best effort; the server token expires on its own anyway.
+const LOGOUT_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug)]
 pub enum ApiError {
@@ -131,7 +133,9 @@ impl Api {
         self.call("AuthService", "ConfirmKeyRotation", &request, Some(token)).await
     }
 
+    /// Short timeout: it also runs while the app closes, which must not hang when the server is down.
     pub async fn logout(&self, token: &str) -> Result<proto::LogoutResponse, ApiError> {
-        self.call("AuthService", "Logout", &proto::LogoutRequest {}, Some(token)).await
+        self.call_with_timeout("AuthService", "Logout", &proto::LogoutRequest {}, Some(token), LOGOUT_TIMEOUT)
+            .await
     }
 }

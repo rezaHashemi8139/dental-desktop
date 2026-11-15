@@ -108,6 +108,18 @@ pub fn run() {
             languages::install_language,
             languages::remove_language,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // Closing the app always logs out: the server token is ended and the
+            // database locked. The window is already gone, so the wait isn't seen.
+            if let tauri::RunEvent::Exit = event {
+                if let Some(state) = app.try_state::<AuthState>() {
+                    let session = state.session.lock().unwrap().take();
+                    if let Some(session) = session {
+                        tauri::async_runtime::block_on(auth::logout(&state.ctx, session));
+                    }
+                }
+            }
+        });
 }
