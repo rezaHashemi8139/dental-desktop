@@ -52,9 +52,9 @@ mod windows {
             settings.SetIsSwipeNavigationEnabled(false)?;
         }
 
-        // Some settings only take effect on the next navigation. This runs while the
-        // first page is still loading (the window is hidden), so start it again.
-        webview.Reload()?;
+        // No Reload() here: this runs before the first page has committed, and a
+        // reload then cancels that navigation and leaves the window on about:blank.
+        // Settings applied now already hold for that first page.
         Ok(())
     }
 }
