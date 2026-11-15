@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "start": "tauri dev",
+    "start": "node scripts/dev.mjs",
     "build": "node scripts/build.mjs"
   },
   "dependencies": {

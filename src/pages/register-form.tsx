@@ -35,7 +35,12 @@ export function RegisterForm({ onRegistered }: RegisterFormProps) {
   const valid = Object.values(fieldErrors).every((e) => e === null);
 
   function set(field: Field) {
-    return (e: React.ChangeEvent<HTMLInputElement>) => setValues((v) => ({ ...v, [field]: e.currentTarget.value }));
+    return (e: React.ChangeEvent<HTMLInputElement>) => {
+      // Read the value now: React clears `currentTarget` once the event is handled,
+      // and the updater below runs later, during render.
+      const value = e.currentTarget.value;
+      setValues((v) => ({ ...v, [field]: value }));
+    };
   }
 
   function fieldError(field: Field) {
