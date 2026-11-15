@@ -35,7 +35,7 @@ Rules:
   - "abbr": a short uppercase label (e.g. "DE")
   - "dir": "rtl" for right-to-left scripts (Arabic, Persian, Hebrew, Urdu), otherwise "ltr"
   - "version": 1
-- This is a dental clinic management app: use the standard terms a clinic in that country would use.
+- This is a clinic management app: use the standard terms a clinic in that country would use.
 ```
 
 ## For developers
