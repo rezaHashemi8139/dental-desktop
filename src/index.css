@@ -130,3 +130,32 @@
     @apply font-sans;
     }
 }
+/* Scrollbars: thin, rounded and the same on every OS and in every scrollable area.
+   Drawn with ::-webkit-scrollbar, which WebView2 (Windows), WKWebView (macOS) and
+   WebKitGTK (Linux) all support. Do not add the standard `scrollbar-width` /
+   `scrollbar-color` here: in Chromium they switch these custom styles off. */
+::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+    background: transparent;
+}
+::-webkit-scrollbar-thumb {
+    /* The transparent border makes the visible bar thinner than the area that can be grabbed. */
+    border: 3px solid transparent;
+    border-radius: 9999px;
+    background-clip: padding-box;
+    background-color: color-mix(in oklch, var(--foreground) 22%, transparent);
+}
+::-webkit-scrollbar-thumb:hover {
+    border-width: 2px;
+    background-color: color-mix(in oklch, var(--foreground) 38%, transparent);
+}
+::-webkit-scrollbar-thumb:active {
+    background-color: color-mix(in oklch, var(--foreground) 50%, transparent);
+}
+::-webkit-scrollbar-button {
+    display: none;
+}
