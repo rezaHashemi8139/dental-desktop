@@ -1,78 +1,41 @@
-import { useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { currentSession, type Session } from "@/auth/session";
 import { LanguageSwitcher } from "@/components/language-switcher";
-import { toRustMessage, translateMessage, type RustMessage } from "@/i18n/message";
+import { AuthPage } from "@/pages/auth-page";
+import { HomePage } from "@/pages/home-page";
 
 function App() {
   const { t } = useTranslation();
-  const [greetMsg, setGreetMsg] = useState<RustMessage | null>(null);
-  const [name, setName] = useState("");
-  const [testDbMsg, setTestDbMsg] = useState<RustMessage | null>(null);
+  // undefined = still checking whether someone is logged in.
+  const [session, setSession] = useState<Session | null | undefined>(undefined);
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    try {
-      setGreetMsg(await invoke<RustMessage>("greet", { name }));
-    } catch (error) {
-      setGreetMsg(toRustMessage(error));
-    }
-  }
-
-  async function testDb() {
-    try {
-      setTestDbMsg(await invoke<RustMessage>("test_db_connection"));
-    } catch (error) {
-      setTestDbMsg(toRustMessage(error));
-    }
-  }
+  useEffect(() => {
+    currentSession()
+      .then(setSession)
+      .catch(() => setSession(null));
+  }, []);
 
   return (
-    <main className="flex min-h-svh items-center justify-center p-6">
-      <Card className="w-full max-w-md">
-        <CardHeader>
-          <CardTitle>{t("app.title")}</CardTitle>
-          <CardDescription>{t("app.subtitle")}</CardDescription>
-          <CardAction>
-            <LanguageSwitcher />
-          </CardAction>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-4">
-          <form
-            className="flex gap-2"
-            onSubmit={(e) => {
-              e.preventDefault();
-              greet();
-            }}
-          >
-            <Input
-              id="greet-input"
-              onChange={(e) => setName(e.currentTarget.value)}
-              placeholder={t("greet.placeholder")}
-            />
-            <Button type="submit">{t("greet.button")}</Button>
-          </form>
-          {greetMsg && <p className="text-sm">{translateMessage(greetMsg)}</p>}
+    <div className="flex min-h-svh flex-col">
+      <header className="flex items-center justify-between gap-4 border-b px-4 py-2">
+        <div>
+          <h1 className="text-sm font-semibold" dir="ltr">
+            {t("app.title")}
+          </h1>
+          <p className="text-xs text-muted-foreground">{t("app.subtitle")}</p>
+        </div>
+        <LanguageSwitcher />
+      </header>
 
-          <Button variant="outline" onClick={testDb}>
-            {t("database.testConnection")}
-          </Button>
-          {testDbMsg && (
-            <p className="text-sm text-muted-foreground">{translateMessage(testDbMsg)}</p>
-          )}
-        </CardContent>
-      </Card>
-    </main>
+      <main className="flex flex-1 items-center justify-center p-6">
+        {session === undefined ? null : session ? (
+          <HomePage session={session} onLoggedOut={() => setSession(null)} />
+        ) : (
+          <AuthPage onLoggedIn={setSession} />
+        )}
+      </main>
+    </div>
   );
 }
 

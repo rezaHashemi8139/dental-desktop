@@ -4,20 +4,76 @@
     "name": "English",
     "abbr": "EN",
     "dir": "ltr",
-    "version": 1
+    "version": 2
   },
   "app": {
-    "title": "Welcome to Smart Management Base",
+    "title": "Smart Management Base",
     "subtitle": "Dental clinic management"
   },
-  "greet": {
-    "placeholder": "Enter a name...",
-    "button": "Greet",
-    "message": "Hello, {{name}}! You've been greeted from Rust!"
+  "auth": {
+    "tabs": {
+      "login": "Log in",
+      "register": "Create account"
+    },
+    "login": {
+      "title": "Log in",
+      "description": "Log in with your username and password.",
+      "submit": "Log in",
+      "working": "Logging in..."
+    },
+    "register": {
+      "title": "Create account",
+      "description": "Create an account on the server. An internet connection is needed.",
+      "submit": "Create account",
+      "working": "Creating account..."
+    },
+    "fields": {
+      "fullName": "Full name",
+      "username": "Username",
+      "password": "Password",
+      "confirmPassword": "Repeat password"
+    },
+    "hints": {
+      "username": "3–32 characters: English letters, digits, dot, dash or underscore.",
+      "password": "At least 10 characters."
+    },
+    "validation": {
+      "required": "Please fill in this field.",
+      "usernameFormat": "Use 3–32 English letters, digits, dot, dash or underscore.",
+      "passwordLength": "The password must be at least 10 characters.",
+      "passwordMismatch": "The passwords do not match."
+    },
+    "signUpSuccess": "Your account was created. You can log in now.",
+    "errors": {
+      "invalidInput": "Some of the information entered is not valid.",
+      "invalidInstallation": "This installation is not recognised by the server.",
+      "installationRevoked": "This computer has been blocked. Contact support.",
+      "invalidCredentials": "Wrong username or password.",
+      "userDisabled": "This account has been disabled.",
+      "notAMember": "This account has no access to this clinic. Ask the clinic's administrator to add you.",
+      "usernameTaken": "This username is already taken.",
+      "server": "The server returned an error. ({{details}})",
+      "serverUnreachable": "Could not connect to the server. Check your internet connection.",
+      "setupNeedsInternet": "The first start needs an internet connection.",
+      "invalidGrant": "The saved login information is not valid. Log in once with an internet connection.",
+      "clockTampered": "The computer's date and time are wrong. Correct them and try again.",
+      "offlineExpired": "Offline access has expired. Connect to the internet to log in.",
+      "offlineNotAvailable": "The server cannot be reached, and this user has not logged in on this computer with an internet connection before.",
+      "databaseUnavailable": "The clinic database could not be opened. Log in once with an internet connection."
+    }
   },
-  "database": {
-    "testConnection": "Test Database Connection",
-    "connected": "Successfully connected to the database!"
+  "home": {
+    "welcome": "Welcome, {{name}}",
+    "role": "Role",
+    "admin": "Administrator",
+    "online": "Online",
+    "offline": "Offline",
+    "offlineUntil": "Offline access until {{date}}",
+    "logout": "Log out"
+  },
+  "roles": {
+    "manager": "Manager",
+    "staff": "Staff"
   },
   "language": {
     "label": "Language",
@@ -41,7 +97,6 @@
   },
   "errors": {
     "unknown": "Something went wrong: {{details}}",
-    "database": "Database error: {{details}}",
     "network": "Could not connect to the server. Check your internet connection. ({{details}})",
     "languageServer": "The language server returned an error (code {{status}}).",
     "invalidCatalog": "The language list from the server is not valid. ({{details}})",

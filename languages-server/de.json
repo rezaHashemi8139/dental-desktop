@@ -4,20 +4,76 @@
     "name": "Deutsch",
     "abbr": "DE",
     "dir": "ltr",
-    "version": 1
+    "version": 2
   },
   "app": {
-    "title": "Willkommen bei Smart Management Base",
+    "title": "Smart Management Base",
     "subtitle": "Verwaltung für Zahnarztpraxen"
   },
-  "greet": {
-    "placeholder": "Namen eingeben...",
-    "button": "Begrüßen",
-    "message": "Hallo, {{name}}! Rust lässt grüßen!"
+  "auth": {
+    "tabs": {
+      "login": "Anmelden",
+      "register": "Konto erstellen"
+    },
+    "login": {
+      "title": "Anmelden",
+      "description": "Melden Sie sich mit Benutzername und Passwort an.",
+      "submit": "Anmelden",
+      "working": "Anmeldung läuft..."
+    },
+    "register": {
+      "title": "Konto erstellen",
+      "description": "Erstellen Sie ein Konto auf dem Server. Dafür ist eine Internetverbindung nötig.",
+      "submit": "Konto erstellen",
+      "working": "Konto wird erstellt..."
+    },
+    "fields": {
+      "fullName": "Vollständiger Name",
+      "username": "Benutzername",
+      "password": "Passwort",
+      "confirmPassword": "Passwort wiederholen"
+    },
+    "hints": {
+      "username": "3–32 Zeichen: englische Buchstaben, Ziffern, Punkt, Bindestrich oder Unterstrich.",
+      "password": "Mindestens 10 Zeichen."
+    },
+    "validation": {
+      "required": "Bitte füllen Sie dieses Feld aus.",
+      "usernameFormat": "Verwenden Sie 3–32 englische Buchstaben, Ziffern, Punkt, Bindestrich oder Unterstrich.",
+      "passwordLength": "Das Passwort muss mindestens 10 Zeichen lang sein.",
+      "passwordMismatch": "Die Passwörter stimmen nicht überein."
+    },
+    "signUpSuccess": "Ihr Konto wurde erstellt. Sie können sich jetzt anmelden.",
+    "errors": {
+      "invalidInput": "Einige der eingegebenen Angaben sind ungültig.",
+      "invalidInstallation": "Der Server erkennt diese Installation nicht.",
+      "installationRevoked": "Dieser Computer wurde gesperrt. Wenden Sie sich an den Support.",
+      "invalidCredentials": "Falscher Benutzername oder falsches Passwort.",
+      "userDisabled": "Dieses Konto wurde deaktiviert.",
+      "notAMember": "Dieses Konto hat keinen Zugriff auf diese Praxis. Bitten Sie die Administration der Praxis, Sie hinzuzufügen.",
+      "usernameTaken": "Dieser Benutzername ist bereits vergeben.",
+      "server": "Der Server hat einen Fehler gemeldet. ({{details}})",
+      "serverUnreachable": "Keine Verbindung zum Server. Prüfen Sie Ihre Internetverbindung.",
+      "setupNeedsInternet": "Der erste Start benötigt eine Internetverbindung.",
+      "invalidGrant": "Die gespeicherten Anmeldedaten sind ungültig. Melden Sie sich einmal mit Internetverbindung an.",
+      "clockTampered": "Datum und Uhrzeit des Computers sind falsch. Korrigieren Sie sie und versuchen Sie es erneut.",
+      "offlineExpired": "Der Offline-Zugang ist abgelaufen. Verbinden Sie sich mit dem Internet, um sich anzumelden.",
+      "offlineNotAvailable": "Der Server ist nicht erreichbar, und dieser Benutzer hat sich auf diesem Computer noch nie mit Internetverbindung angemeldet.",
+      "databaseUnavailable": "Die Praxisdatenbank konnte nicht geöffnet werden. Melden Sie sich einmal mit Internetverbindung an."
+    }
   },
-  "database": {
-    "testConnection": "Datenbankverbindung testen",
-    "connected": "Verbindung zur Datenbank erfolgreich hergestellt!"
+  "home": {
+    "welcome": "Willkommen, {{name}}",
+    "role": "Rolle",
+    "admin": "Administrator",
+    "online": "Online",
+    "offline": "Offline",
+    "offlineUntil": "Offline-Zugang bis {{date}}",
+    "logout": "Abmelden"
+  },
+  "roles": {
+    "manager": "Leitung",
+    "staff": "Mitarbeiter"
   },
   "language": {
     "label": "Sprache",
@@ -41,7 +97,6 @@
   },
   "errors": {
     "unknown": "Etwas ist schiefgelaufen: {{details}}",
-    "database": "Datenbankfehler: {{details}}",
     "network": "Keine Verbindung zum Server. Prüfen Sie Ihre Internetverbindung. ({{details}})",
     "languageServer": "Der Sprachserver hat einen Fehler gemeldet (Code {{status}}).",
     "invalidCatalog": "Die Sprachliste vom Server ist ungültig. ({{details}})",

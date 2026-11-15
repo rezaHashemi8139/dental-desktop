@@ -15,6 +15,8 @@ name = "dental_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
+prost-build = "0.14.6"
+protox = "0.10.0"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
@@ -26,4 +28,21 @@ tauri-plugin-single-instance = "2.4.3"
 # native-tls uses the Windows TLS stack (no extra build tools needed).
 reqwest = { version = "0.13.5", default-features = false, features = ["native-tls", "charset", "http2", "system-proxy"] }
 rusqlite = { version = "0.40.1", features = ["bundled-sqlcipher-vendored-openssl"] }
+prost = "0.14.6"
+prost-types = "0.14.6"
+ed25519-dalek = "3.0.0"
+hkdf = "0.13.0"
+sha2 = "0.11.1"
+chacha20poly1305 = "0.11.0"
+argon2 = "0.6.0"
+zeroize = "1.9.1"
+getrandom = "0.4.3"
+sysinfo = "0.40.3"
+base64 = "0.23.1"
+hex = "0.4.3"
+x25519-dalek = { version = "3.0.0", features = ["static_secrets"] }
+
+[target."cfg(windows)".dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Security_Cryptography", "Win32_Foundation"] }
+winreg = "0.56.0"
 
