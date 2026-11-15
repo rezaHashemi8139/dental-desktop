@@ -1,0 +1,22 @@
+{
+  "_meta": {
+    "code": "fa",
+    "name": "فارسی",
+    "abbr": "FA",
+    "dir": "rtl"
+  },
+  "app": {
+    "title": "به Smart Management Base خوش آمدید",
+    "subtitle": "مدیریت کلینیک دندان‌پزشکی"
+  },
+  "greet": {
+    "placeholder": "یک نام وارد کنید...",
+    "button": "سلام کن"
+  },
+  "database": {
+    "testConnection": "تست اتصال به پایگاه داده"
+  },
+  "language": {
+    "label": "زبان"
+  }
+}

@@ -1,16 +1,20 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   Card,
+  CardAction,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { LanguageSwitcher } from "@/components/language-switcher";
 
 function App() {
+  const { t } = useTranslation();
   const [greetMsg, setGreetMsg] = useState("");
   const [name, setName] = useState("");
   const [testDbMsg, setTestDbMsg] = useState("");
@@ -33,8 +37,11 @@ function App() {
     <main className="flex min-h-svh items-center justify-center p-6">
       <Card className="w-full max-w-md">
         <CardHeader>
-          <CardTitle>Welcome to Smart Management Base</CardTitle>
-          <CardDescription>Tauri + React + shadcn/ui</CardDescription>
+          <CardTitle>{t("app.title")}</CardTitle>
+          <CardDescription>{t("app.subtitle")}</CardDescription>
+          <CardAction>
+            <LanguageSwitcher />
+          </CardAction>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           <form
@@ -47,14 +54,14 @@ function App() {
             <Input
               id="greet-input"
               onChange={(e) => setName(e.currentTarget.value)}
-              placeholder="Enter a name..."
+              placeholder={t("greet.placeholder")}
             />
-            <Button type="submit">Greet</Button>
+            <Button type="submit">{t("greet.button")}</Button>
           </form>
           {greetMsg && <p className="text-sm">{greetMsg}</p>}
 
           <Button variant="outline" onClick={testDb}>
-            Test Database Connection
+            {t("database.testConnection")}
           </Button>
           {testDbMsg && (
             <p className="text-sm text-muted-foreground">{testDbMsg}</p>

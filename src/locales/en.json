@@ -1,0 +1,22 @@
+{
+  "_meta": {
+    "code": "en",
+    "name": "English",
+    "abbr": "EN",
+    "dir": "ltr"
+  },
+  "app": {
+    "title": "Welcome to Smart Management Base",
+    "subtitle": "Dental clinic management"
+  },
+  "greet": {
+    "placeholder": "Enter a name...",
+    "button": "Greet"
+  },
+  "database": {
+    "testConnection": "Test Database Connection"
+  },
+  "language": {
+    "label": "Language"
+  }
+}
