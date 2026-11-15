@@ -1,53 +1,44 @@
-//! Language packs downloaded from the language server.
+//! Interface languages downloaded from the dental server (LanguageService).
 //!
-//! English and Persian are built into the frontend. Other languages are listed
-//! in a catalog on the server and, once installed, saved as
-//! `<app data dir>/languages/<code>.json`, in the same format as
-//! `src/locales/*.json`. See `languages-server/README.md` for the server layout.
+//! Persian is built into the frontend. Every other language (English, German, ...) is offered
+//! by the server (dental-server/internal/languages) and, once installed, saved as
+//! `<app data dir>/languages/<code>.json`, in the same format as `src/locales/*.json`.
 
-use std::{fs, io, path::PathBuf, time::Duration};
+use std::{fs, io, path::PathBuf};
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, State};
 
+use crate::api::ApiError;
 use crate::message::Message;
-
-/// Base URL of the language server (static files, no trailing slash):
-/// `{LANGUAGE_SERVER_URL}/index.json` is the catalog and
-/// `{LANGUAGE_SERVER_URL}/{code}.json` is one language.
-/// Can be overridden at build time with the `LANGUAGE_SERVER_URL` environment variable.
-const LANGUAGE_SERVER_URL: &str = match option_env!("LANGUAGE_SERVER_URL") {
-    Some(url) => url,
-    None => "https://example.com/dental/languages",
-};
+use crate::{proto, AuthState};
 
 /// A language file is a few KB; anything far larger is not one.
 const MAX_FILE_SIZE: usize = 2 * 1024 * 1024;
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 
-#[derive(Debug, Serialize, Deserialize)]
+/// One language on offer (sent to the frontend as `CatalogEntry` in src/i18n/index.ts).
+#[derive(Debug, Serialize)]
 pub struct CatalogEntry {
     code: String,
     name: String,
     abbr: String,
-    #[serde(default = "default_dir")]
     dir: String,
-    #[serde(default = "default_version")]
     version: u32,
 }
 
-#[derive(Deserialize)]
-struct Catalog {
-    languages: Vec<CatalogEntry>,
+impl From<proto::Language> for CatalogEntry {
+    fn from(l: proto::Language) -> Self {
+        Self { code: l.code, name: l.name, abbr: l.abbr, dir: l.dir, version: l.version }
+    }
 }
 
-fn default_dir() -> String {
-    "ltr".into()
-}
-
-fn default_version() -> u32 {
-    1
+fn server_error(e: ApiError) -> Message {
+    match e {
+        ApiError::Network(details) => Message::error("errors.network", details),
+        ApiError::Server { reason, .. } if reason == "language_not_found" => Message::new("errors.languageNotFound"),
+        ApiError::Server { code, reason } => Message::error("errors.languageServer", format!("{code}: {reason}")),
+    }
 }
 
 /// Codes become file names, so only allow things like `de`, `pt-BR`, `zh-Hant`.
@@ -91,46 +82,15 @@ fn validate_language_file(value: &Value, code: &str) -> Result<(), String> {
     }
 }
 
-async fn download(path: &str) -> Result<Vec<u8>, Message> {
-    download_from(LANGUAGE_SERVER_URL, path).await
-}
-
-async fn download_from(base_url: &str, path: &str) -> Result<Vec<u8>, Message> {
-    let url = format!("{base_url}/{path}");
-    let network_error = |e: reqwest::Error| Message::error("errors.network", e);
-
-    let response = reqwest::Client::builder()
-        .timeout(REQUEST_TIMEOUT)
-        .build()
-        .map_err(network_error)?
-        .get(&url)
-        .send()
-        .await
-        .map_err(network_error)?;
-
-    let status = response.status();
-    if !status.is_success() {
-        return Err(Message::new("errors.languageServer").with("status", status.as_u16()));
-    }
-
-    let bytes = response.bytes().await.map_err(network_error)?;
-    if bytes.len() > MAX_FILE_SIZE {
-        return Err(Message::error("errors.invalidLanguageFile", "file is too large"));
-    }
-    Ok(bytes.to_vec())
-}
-
 /// Languages offered by the server.
 #[tauri::command]
-pub async fn get_language_catalog() -> Result<Vec<CatalogEntry>, Message> {
-    let bytes = download("index.json").await?;
-    let catalog: Catalog =
-        serde_json::from_slice(&bytes).map_err(|e| Message::error("errors.invalidCatalog", e))?;
-
-    Ok(catalog
+pub async fn get_language_catalog(state: State<'_, AuthState>) -> Result<Vec<CatalogEntry>, Message> {
+    let response = state.ctx.api.list_languages().await.map_err(server_error)?;
+    Ok(response
         .languages
         .into_iter()
-        .filter(|entry| is_valid_code(&entry.code))
+        .filter(|language| is_valid_code(&language.code))
+        .map(CatalogEntry::from)
         .collect())
 }
 
@@ -171,10 +131,13 @@ pub fn list_installed_languages(app: AppHandle) -> Result<Vec<Value>, Message> {
 /// Downloads a language from the server (or replaces it with the newer version)
 /// and returns its contents.
 #[tauri::command]
-pub async fn install_language(app: AppHandle, code: String) -> Result<Value, Message> {
+pub async fn install_language(app: AppHandle, state: State<'_, AuthState>, code: String) -> Result<Value, Message> {
     check_code(&code)?;
 
-    let bytes = download(&format!("{code}.json")).await?;
+    let bytes = state.ctx.api.get_language(&code).await.map_err(server_error)?.content;
+    if bytes.len() > MAX_FILE_SIZE {
+        return Err(Message::error("errors.invalidLanguageFile", "file is too large"));
+    }
     let value: Value =
         serde_json::from_slice(&bytes).map_err(|e| Message::error("errors.invalidLanguageFile", e))?;
     validate_language_file(&value, &code).map_err(|e| Message::error("errors.invalidLanguageFile", e))?;
@@ -228,46 +191,10 @@ mod tests {
         assert!(validate_language_file(&json!({ "_meta": { "code": "de", "name": " " } }), "de").is_err());
     }
 
-    /// Every language listed in the sample `languages-server/index.json` exists and matches its file.
     #[test]
-    fn sample_server_files_are_consistent() {
-        let server = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../languages-server");
-        let catalog: Catalog = serde_json::from_slice(&fs::read(server.join("index.json")).unwrap()).unwrap();
-        assert!(!catalog.languages.is_empty());
-
-        for entry in catalog.languages {
-            let file: Value =
-                serde_json::from_slice(&fs::read(server.join(format!("{}.json", entry.code))).unwrap()).unwrap();
-            validate_language_file(&file, &entry.code).unwrap();
-            assert_eq!(file["_meta"]["version"].as_u64(), Some(entry.version as u64), "{} version", entry.code);
-        }
-    }
-
-    /// Serves one canned HTTP response on a local port and returns the base URL.
-    fn serve_once(status: &str, body: &'static [u8]) -> String {
-        use std::io::{Read, Write};
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        let status = status.to_owned();
-        std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let _ = stream.read(&mut [0; 4096]);
-            let header = format!("HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
-            stream.write_all(header.as_bytes()).unwrap();
-            stream.write_all(body).unwrap();
-        });
-        format!("http://{address}")
-    }
-
-    #[test]
-    fn download_returns_body_or_status_error() {
-        let ok = serve_once("200 OK", b"{\"languages\":[]}");
-        let body = tauri::async_runtime::block_on(download_from(&ok, "index.json")).unwrap();
-        assert_eq!(body, b"{\"languages\":[]}");
-
-        let missing = serve_once("404 Not Found", b"");
-        let error = tauri::async_runtime::block_on(download_from(&missing, "de.json")).unwrap_err();
-        assert_eq!(error.key, "errors.languageServer");
-        assert_eq!(error.params["status"], 404);
+    fn server_errors() {
+        let not_found = server_error(ApiError::Server { code: "not_found".into(), reason: "language_not_found".into() });
+        assert_eq!(not_found.key, "errors.languageNotFound");
+        assert_eq!(server_error(ApiError::Network("x".into())).key, "errors.network");
     }
 }

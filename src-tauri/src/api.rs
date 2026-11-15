@@ -138,4 +138,14 @@ impl Api {
         self.call_with_timeout("AuthService", "Logout", &proto::LogoutRequest {}, Some(token), LOGOUT_TIMEOUT)
             .await
     }
+
+    /// Downloadable interface languages. No session needed.
+    pub async fn list_languages(&self) -> Result<proto::ListLanguagesResponse, ApiError> {
+        self.call("LanguageService", "ListLanguages", &proto::ListLanguagesRequest {}, None).await
+    }
+
+    pub async fn get_language(&self, code: &str) -> Result<proto::GetLanguageResponse, ApiError> {
+        let request = proto::GetLanguageRequest { code: code.to_owned() };
+        self.call("LanguageService", "GetLanguage", &request, None).await
+    }
 }

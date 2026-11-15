@@ -11,6 +11,7 @@ const PROTO_FILES: &[&str] = &[
     "dental/v1/crypto.proto",
     "dental/v1/health.proto",
     "dental/v1/installation.proto",
+    "dental/v1/language.proto",
     "dental/v1/member.proto",
 ];
 

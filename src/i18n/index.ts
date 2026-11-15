@@ -8,9 +8,9 @@ import { invoke } from "@tauri-apps/api/core";
  * A language is one JSON file that describes itself in its `_meta` section
  * (code, full name, abbreviation, text direction, version). Languages come from
  * two places:
- * - built-in: every file in `src/locales`, bundled into the app;
- * - installed: downloaded from the language server and saved by the Rust side
- *   (see `src-tauri/src/languages.rs`). These can be removed again.
+ * - built-in: every file in `src/locales` (only Persian), bundled into the app;
+ * - installed: downloaded from the dental server (English, German, ...) and saved
+ *   by the Rust side (see `src-tauri/src/languages.rs`). These can be removed again.
  * See `src/locales/README.md`.
  */
 
@@ -34,8 +34,8 @@ export type LanguageFile = { _meta?: LanguageMeta } & Record<string, unknown>;
 
 /** Used on first launch, before the user has picked a language. */
 const DEFAULT_LANGUAGE = "fa";
-/** Used for any text missing from the selected language's file. */
-const FALLBACK_LANGUAGE = "en";
+/** Used for any text missing from the selected language's file: the built-in language. */
+const FALLBACK_LANGUAGE = "fa";
 const STORAGE_KEY = "language";
 const NAMESPACE = "translation";
 

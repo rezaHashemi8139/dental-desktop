@@ -115,8 +115,8 @@
   "errors": {
     "unknown": "مشکلی پیش آمد: {{details}}",
     "network": "اتصال به سرور برقرار نشد. اینترنت را بررسی کنید. ({{details}})",
-    "languageServer": "سرور زبان‌ها خطا برگرداند (کد {{status}}).",
-    "invalidCatalog": "فهرست زبان‌هایی که از سرور آمد معتبر نیست. ({{details}})",
+    "languageServer": "سرور با خطا پاسخ داد. ({{details}})",
+    "languageNotFound": "این زبان دیگر روی سرور نیست.",
     "invalidLanguageFile": "فایل زبان دانلودشده معتبر نیست. ({{details}})",
     "invalidLanguageCode": "«{{code}}» کد زبان معتبری نیست.",
     "fileSystem": "خواندن یا ذخیره‌ی فایل انجام نشد. ({{details}})"

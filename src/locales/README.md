@@ -4,20 +4,23 @@ Each `.json` file is one language and describes itself in its `_meta` section
 (code, full name, abbreviation, direction, version). There are two ways to ship one:
 
 - **Built into the app:** put the file in this folder. It is always available and cannot be removed.
-- **Downloadable:** put the file on the language server (see `languages-server/README.md`).
-  Users download it from *Language → Manage languages...* and can remove it again,
+- **Downloadable:** put the file in the server repository, `dental-server/internal/languages/files/`
+  (see the README there). The app gets the list and the file from the server's `LanguageService`;
+  users download it from *Language → Manage languages...* and can remove it again,
   except for the language they are using.
 
-Any text missing from a file falls back to English, so a partial translation still works.
+Only Persian (`fa.json`) is built in; every other language (English, German, ...) is downloaded
+from the server. Any text missing from a file falls back to Persian, so a partial translation still works.
 
 Text coming from Rust is translated here too: Rust sends a key such as
 `greet.message` plus values, never finished text (see `src-tauri/src/message.rs`).
 
 ## Adding a language
 
-1. Give `en.json` to an AI with the prompt below (replace the language).
+1. Give `fa.json` (or the English file, `dental-server/internal/languages/files/en.json`)
+   to an AI with the prompt below (replace the language).
 2. Save the result as `<code>.json`, e.g. `de.json`, `ar.json`, `tr.json`,
-   in this folder or on the language server.
+   in this folder or in `dental-server/internal/languages/files/`.
 
 ## Prompt for the AI
 
@@ -40,6 +43,7 @@ Rules:
 
 ## For developers
 
-- `en.json` is the reference: new keys are added there first, and TypeScript checks every `t("...")` call against it.
+- `fa.json` is the reference: new keys are added there first, and TypeScript checks every `t("...")` call against it.
+  Add the same keys to the files in `dental-server/internal/languages/files/` and raise their `version`.
 - Use text in components with `const { t } = useTranslation();` then `t("section.key")`.
 - Values with variables: `"hello": "Hello {{name}}"` → `t("hello", { name })`.
