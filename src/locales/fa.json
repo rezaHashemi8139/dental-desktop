@@ -4,7 +4,6 @@
     "name": "فارسی",
     "abbr": "FA",
     "dir": "rtl",
-    "calendar": "persian",
     "version": 2
   },
   "app": {

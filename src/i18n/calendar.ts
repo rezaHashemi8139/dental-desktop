@@ -1,11 +1,28 @@
 import { useCallback, useSyncExternalStore } from "react";
-import { CALENDARS, type Calendar } from "./index";
 import { useLanguage } from "./use-language";
 
 /**
- * Which calendar dates are shown in. "auto" (the default) follows the language
- * (`_meta.calendar` in its file: Persian → Solar Hijri, English → Gregorian, ...); the user
- * can pick a fixed one from the header instead. Saved on this computer.
+ * Calendars for showing dates. Display only: dates are always stored, compared and
+ * sent to Rust and the server as plain timestamps; they are turned into Solar Hijri,
+ * Gregorian or Lunar Hijri only here, while rendering.
+ */
+
+/** Intl calendar ids: Solar Hijri, Gregorian, Lunar Hijri. */
+export type Calendar = "persian" | "gregory" | "islamic";
+export const CALENDARS: readonly Calendar[] = ["persian", "gregory", "islamic"];
+
+/** Default calendar of a language; any language not listed uses Gregorian. */
+const LANGUAGE_CALENDARS: Record<string, Calendar> = {
+  fa: "persian",
+};
+
+export function languageCalendar(languageCode: string): Calendar {
+  return LANGUAGE_CALENDARS[languageCode] ?? "gregory";
+}
+
+/**
+ * "auto" (the default) follows the language (see LANGUAGE_CALENDARS); the user
+ * can pick a fixed calendar from the header instead. Saved on this computer.
  */
 export type CalendarChoice = "auto" | Calendar;
 
@@ -45,17 +62,18 @@ function subscribe(listener: () => void) {
 export function useCalendar() {
   const { language } = useLanguage();
   const current = useSyncExternalStore(subscribe, () => choice);
+  const fromLanguage = languageCalendar(language.code);
   return {
     choice: current,
-    calendar: current === "auto" ? language.calendar : current,
+    calendar: current === "auto" ? fromLanguage : current,
     /** The calendar "auto" stands for in the current language. */
-    languageCalendar: language.calendar,
+    languageCalendar: fromLanguage,
     setChoice: setCalendarChoice,
   };
 }
 
 /**
- * Formats dates in the current language and calendar, e.g.
+ * Formats a timestamp in the current language and calendar, e.g.
  * `formatDate(date, { dateStyle: "medium", timeStyle: "short" })`.
  */
 export function useFormatDate() {

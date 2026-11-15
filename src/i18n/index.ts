@@ -16,20 +16,15 @@ import { invoke } from "@tauri-apps/api/core";
 
 export type TextDirection = "ltr" | "rtl";
 export type LanguageSource = "builtin" | "installed";
-/** Intl calendar ids: Solar Hijri, Gregorian, Lunar Hijri. */
-export type Calendar = "persian" | "gregory" | "islamic";
-export const CALENDARS: readonly Calendar[] = ["persian", "gregory", "islamic"];
 
 export interface Language {
   /** Language code, e.g. "fa". */
   code: string;
-  /** Full name in the language itself, e.g. "Deutsch". */
+  /** Full name in the language itself, e.g. "English". */
   name: string;
   /** Short label, e.g. "FA". */
   abbr: string;
   dir: TextDirection;
-  /** How dates are shown in this language, unless the user picks another calendar (see src/i18n/calendar.ts). */
-  calendar: Calendar;
   version: number;
   source: LanguageSource;
 }
@@ -80,12 +75,6 @@ function toLanguage(file: LanguageFile, fallbackCode: string, source: LanguageSo
     name: meta.name?.trim() || code,
     abbr: meta.abbr?.trim() || code.toUpperCase(),
     dir: meta.dir === "rtl" ? "rtl" : "ltr",
-    // Files downloaded before `_meta.calendar` existed: Persian uses its own calendar, others Gregorian.
-    calendar: CALENDARS.includes(meta.calendar as Calendar)
-      ? (meta.calendar as Calendar)
-      : code === "fa"
-        ? "persian"
-        : "gregory",
     version: Number(meta.version) || 1,
     source,
   };
