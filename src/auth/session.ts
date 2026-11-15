@@ -14,10 +14,23 @@ export interface Session {
   offlineUntil: number;
 }
 
+/**
+ * What the login screen can offer (see ConnectionMode in src-tauri/src/auth.rs):
+ * - "online": the server is reachable; login and sign-up go through it.
+ * - "offline": no server, but this computer has the clinic database and users who logged in before: login only.
+ * - "unavailable": no server and nothing to log in to locally.
+ */
+export type ConnectionMode = "online" | "offline" | "unavailable";
+
 // Each call throws a RustMessage (see src/i18n/message.ts) on failure.
+// The server is only ever contacted from Rust.
 
 export function currentSession(): Promise<Session | null> {
   return invoke<Session | null>("current_session");
+}
+
+export function connectionStatus(): Promise<ConnectionMode> {
+  return invoke<ConnectionMode>("connection_status");
 }
 
 export function login(username: string, password: string): Promise<Session> {

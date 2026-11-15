@@ -12,13 +12,11 @@ use serde::Deserialize;
 
 use crate::proto;
 
-/// Server address. Set DENTAL_SERVER_URL at build time for production (https://...).
-pub const SERVER_URL: &str = match option_env!("DENTAL_SERVER_URL") {
-    Some(url) => url,
-    None => "http://localhost:8080",
-};
+// The server address is set in settings.rs.
 
 const TIMEOUT: Duration = Duration::from_secs(15);
+/// The connection check should not keep the user waiting long when the server is down.
+const HEALTH_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug)]
 pub enum ApiError {
@@ -56,7 +54,6 @@ pub struct Api {
 impl Api {
     pub fn new(base_url: impl Into<String>) -> Self {
         let http = reqwest::Client::builder()
-            .timeout(TIMEOUT)
             .build()
             .expect("HTTP client configuration is valid");
         Self { base_url: base_url.into().trim_end_matches('/').to_owned(), http }
@@ -69,9 +66,21 @@ impl Api {
         request: &Req,
         session_token: Option<&str>,
     ) -> Result<Res, ApiError> {
+        self.call_with_timeout(service, method, request, session_token, TIMEOUT).await
+    }
+
+    async fn call_with_timeout<Req: prost::Message, Res: prost::Message + Default>(
+        &self,
+        service: &str,
+        method: &str,
+        request: &Req,
+        session_token: Option<&str>,
+        timeout: Duration,
+    ) -> Result<Res, ApiError> {
         let mut builder = self
             .http
             .post(format!("{}/dental.v1.{service}/{method}", self.base_url))
+            .timeout(timeout)
             .header("Content-Type", "application/proto")
             .header("Connect-Protocol-Version", "1")
             .body(request.encode_to_vec());
@@ -94,6 +103,11 @@ impl Api {
             Ok(error) => Err(ApiError::Server { code: error.code, reason: error.message }),
             Err(_) => Err(ApiError::Network(format!("unexpected HTTP {status}"))),
         }
+    }
+
+    /// Checks that the server is up. Uses a short timeout.
+    pub async fn health(&self) -> Result<proto::CheckResponse, ApiError> {
+        self.call_with_timeout("HealthService", "Check", &proto::CheckRequest {}, None, HEALTH_TIMEOUT).await
     }
 
     pub async fn register(&self, request: &proto::RegisterRequest) -> Result<proto::RegisterResponse, ApiError> {

@@ -25,7 +25,9 @@ use crate::{clock, device, localdb};
 /// Set DENTAL_SIGNING_PUBLIC_KEY at build time for production.
 const SIGNING_PUBLIC_KEY: &str = match option_env!("DENTAL_SIGNING_PUBLIC_KEY") {
     Some(key) => key,
-    None => "LO48dXRGVwj0NaORFrSXJW4LRnEg6xexRpQnBCJ6sjQ=", // development server
+    // Development server: the public half of SIGNING_KEY in dental-server/.env.
+    // If that key is regenerated, update this value too, or every login fails with invalidGrant.
+    None => "Uiy7cmF7oPw2nz1EKN5Hyk1lKZyxniSRF6UBkGiOuAA=",
 };
 
 pub struct Context {
@@ -105,6 +107,46 @@ fn server_error(code: &str, reason: &str) -> Message {
 /// Server errors that mean "try offline" rather than "refuse".
 fn server_unavailable(code: &str) -> bool {
     matches!(code, "unavailable" | "internal" | "unknown" | "deadline_exceeded" | "resource_exhausted")
+}
+
+/// What the login screen can offer, decided at startup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ConnectionMode {
+    /// The server is reachable: login and sign-up go through it.
+    Online,
+    /// No server, but the local database is here with users who can log in offline: login only.
+    Offline,
+    /// No server and nothing to log in to locally.
+    Unavailable,
+}
+
+pub async fn connection_mode(ctx: &Context) -> ConnectionMode {
+    match ctx.api.health().await {
+        Ok(health) if health.database_ok => return ConnectionMode::Online,
+        // Login would fail with "unavailable" and fall back to offline anyway.
+        Ok(_) => eprintln!("Server is up but its database is not"),
+        Err(e) => eprintln!("Server not reachable: {e}"),
+    }
+    if local_login_possible(ctx) {
+        ConnectionMode::Offline
+    } else {
+        ConnectionMode::Unavailable
+    }
+}
+
+/// Whether the local database exists and someone in the vault holds its key.
+/// The database itself can only be opened with a user's password, so this is
+/// checked again (for real) when they log in.
+fn local_login_possible(ctx: &Context) -> bool {
+    let database_present = std::fs::metadata(ctx.database_path()).map(|m| m.is_file() && m.len() > 0).unwrap_or(false);
+    if !database_present {
+        return false;
+    }
+    match Installation::load(&ctx.data_dir) {
+        Ok(Some(installation)) => Vault::load(&ctx.data_dir, &installation.id).map(|v| v.has_users()).unwrap_or(false),
+        _ => false,
+    }
 }
 
 pub async fn sign_up(ctx: &Context, username: &str, password: &str, full_name: &str) -> Result<(), Message> {
@@ -356,7 +398,7 @@ mod e2e {
     fn context(name: &str) -> Context {
         let dir = std::env::temp_dir().join(format!("dental-e2e-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        Context::new(dir, Api::new(crate::api::SERVER_URL))
+        Context::new(dir, Api::new(crate::settings::SERVER_URL))
     }
 
     fn unique(name: &str) -> String {
@@ -371,6 +413,7 @@ mod e2e {
 
     async fn flow() {
         let online = context("online");
+        assert_eq!(connection_mode(&online).await, ConnectionMode::Online);
         let doctor = unique("doctor");
         sign_up(&online, &doctor, "doctor-password", "Dr. Test").await.unwrap();
 
@@ -389,6 +432,9 @@ mod e2e {
 
         // Same installation, server unreachable: offline login from the vault.
         let offline = Context::new(online.data_dir.clone(), Api::new("http://127.0.0.1:9"));
+        assert_eq!(connection_mode(&offline).await, ConnectionMode::Offline);
+        let nothing_here = Context::new(context("empty").data_dir, Api::new("http://127.0.0.1:9"));
+        assert_eq!(connection_mode(&nothing_here).await, ConnectionMode::Unavailable);
         let session = login(&offline, &doctor, "doctor-password").await.unwrap();
         assert!(!session.info.online);
         assert_eq!(session.info.role, localdb::ROLE_MANAGER, "role read from the local database");

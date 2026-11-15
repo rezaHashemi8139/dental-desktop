@@ -44,6 +44,13 @@
       "passwordMismatch": "The passwords do not match."
     },
     "signUpSuccess": "Your account was created. You can log in now.",
+    "connection": {
+      "checking": "Connecting to the server...",
+      "offline": "The server cannot be reached. You can log in with an account that has logged in on this computer before. Creating an account needs the server.",
+      "unavailableTitle": "No connection",
+      "unavailable": "The server cannot be reached, and nobody has logged in on this computer yet. Check the internet connection and try again.",
+      "retry": "Try again"
+    },
     "errors": {
       "invalidInput": "Some of the information entered is not valid.",
       "invalidInstallation": "This installation is not recognised by the server.",

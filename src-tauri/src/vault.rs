@@ -177,6 +177,11 @@ impl Vault {
         self.users.retain(|entry| !entry.username.eq_ignore_ascii_case(username));
     }
 
+    /// Whether anyone has logged in online here, so can log in offline.
+    pub fn has_users(&self) -> bool {
+        !self.users.is_empty()
+    }
+
     pub fn clear(&mut self) {
         self.users.clear();
     }

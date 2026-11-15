@@ -7,11 +7,12 @@ mod localdb;
 mod message;
 mod proto;
 mod secure;
+mod settings;
 mod vault;
 
 use std::sync::Mutex;
 
-use auth::{Context, Session, SessionInfo};
+use auth::{ConnectionMode, Context, Session, SessionInfo};
 use message::Message;
 use tauri::{Manager, State};
 
@@ -24,6 +25,12 @@ struct AuthState {
 #[tauri::command]
 fn current_session(state: State<'_, AuthState>) -> Option<SessionInfo> {
     state.session.lock().unwrap().as_ref().map(|s| s.info.clone())
+}
+
+/// Checks the server, then the local database: decides which login screen to show.
+#[tauri::command]
+async fn connection_status(state: State<'_, AuthState>) -> Result<ConnectionMode, Message> {
+    Ok(auth::connection_mode(&state.ctx).await)
 }
 
 #[tauri::command]
@@ -59,14 +66,16 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
+            let server_url = settings::server_url(&data_dir);
             app.manage(AuthState {
-                ctx: Context::new(data_dir, api::Api::new(api::SERVER_URL)),
+                ctx: Context::new(data_dir, api::Api::new(server_url)),
                 session: Mutex::new(None),
             });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             current_session,
+            connection_status,
             sign_up,
             login,
             logout,
