@@ -3,7 +3,9 @@
 Each `.json` file is one language and describes itself in its `_meta` section
 (code, full name, abbreviation, direction, version). There are two ways to ship one:
 
-- **Built into the app:** put the file in this folder. It is always available and cannot be removed.
+- **Built into the app:** put the file in this folder. It works without the server. Users can remove it
+  from the language list (unless it is in use), which only hides it: its text still serves as the fallback,
+  and *Manage languages...* adds it back without a download.
 - **Downloadable:** put the file in the server repository, `dental-server/internal/languages/files/`
   (see the README there). The app gets the list and the file from the server's `LanguageService`;
   users download it from *Language → Manage languages...* and can remove it again,
@@ -47,3 +49,6 @@ Rules:
   Add the same keys to the files in `dental-server/internal/languages/files/` and raise their `version`.
 - Use text in components with `const { t } = useTranslation();` then `t("section.key")`.
 - Values with variables: `"hello": "Hello {{name}}"` → `t("hello", { name })`.
+- Dates and money are display-only per language: see `src/i18n/calendar.ts` and `src/i18n/currency.ts`.
+  Amounts are stored as plain numbers in the language's base unit (Rial for Persian); show them with
+  `useFormatMoney()` and edit them with `<MoneyInput>`, which convert Toman ↔ Rial (×10) for you.

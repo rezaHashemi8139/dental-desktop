@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { DownloadIcon, LoaderCircleIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
+import { DownloadIcon, LoaderCircleIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import {
   fetchLanguageCatalog,
   installLanguage,
   removeLanguage,
+  restoreLanguage,
   type CatalogEntry,
   type Language,
 } from "@/i18n";
@@ -25,10 +26,14 @@ interface LanguageManagerDialogProps {
   onOpenChange: (open: boolean) => void;
 }
 
-/** Lists installed languages and the ones on the language server; downloads, updates and removes them. */
+/**
+ * Lists installed languages and the ones on the language server; downloads, updates
+ * and removes them. Removed built-in languages are listed as available and are
+ * added back without a download.
+ */
 export function LanguageManagerDialog({ open, onOpenChange }: LanguageManagerDialogProps) {
   const { t } = useTranslation();
-  const { language: active, languages } = useLanguage();
+  const { language: active, languages, hiddenLanguages } = useLanguage();
 
   const [catalog, setCatalog] = useState<CatalogEntry[] | null>(null);
   const [catalogError, setCatalogError] = useState<RustMessage | null>(null);
@@ -65,18 +70,15 @@ export function LanguageManagerDialog({ open, onOpenChange }: LanguageManagerDia
   }
 
   const serverVersion = (code: string) => catalog?.find((entry) => entry.code === code)?.version;
-  const available = catalog?.filter((entry) => !languages.some((language) => language.code === entry.code)) ?? [];
+  // A removed built-in language is offered from the app itself, never as a download.
+  const known = (code: string) => [...languages, ...hiddenLanguages].some((language) => language.code === code);
+  const available = catalog?.filter((entry) => !known(entry.code)) ?? [];
 
   function renderInstalled(language: Language) {
     const isActive = language.code === active.code;
     const latest = serverVersion(language.code);
     const canUpdate = language.source === "installed" && latest !== undefined && latest > language.version;
-    const removeBlockedReason =
-      language.source === "builtin"
-        ? t("languageManager.builtInCannotBeRemoved")
-        : isActive
-          ? t("languageManager.activeCannotBeRemoved")
-          : null;
+    const removeBlockedReason = isActive ? t("languageManager.activeCannotBeRemoved") : null;
 
     return (
       <li key={language.code} className="flex items-center gap-2 py-2">
@@ -93,20 +95,18 @@ export function LanguageManagerDialog({ open, onOpenChange }: LanguageManagerDia
             {t("languageManager.update")}
           </Button>
         )}
-        {language.source === "installed" && (
-          // A disabled button shows no tooltip, so the reason sits on a wrapper.
-          <span title={removeBlockedReason ?? undefined}>
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              aria-label={t("languageManager.remove")}
-              disabled={busy !== null || removeBlockedReason !== null}
-              onClick={() => run(language.code, removeLanguage)}
-            >
-              {busy === language.code && !canUpdate ? <LoaderCircleIcon className="animate-spin" /> : <Trash2Icon />}
-            </Button>
-          </span>
-        )}
+        {/* A disabled button shows no tooltip, so the reason sits on a wrapper. */}
+        <span title={removeBlockedReason ?? undefined}>
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            aria-label={t("languageManager.remove")}
+            disabled={busy !== null || removeBlockedReason !== null}
+            onClick={() => run(language.code, removeLanguage)}
+          >
+            {busy === language.code && !canUpdate ? <LoaderCircleIcon className="animate-spin" /> : <Trash2Icon />}
+          </Button>
+        </span>
       </li>
     );
   }
@@ -128,6 +128,28 @@ export function LanguageManagerDialog({ open, onOpenChange }: LanguageManagerDia
 
         <section>
           <h3 className="text-sm font-medium">{t("languageManager.available")}</h3>
+          {hiddenLanguages.length > 0 && (
+            <ul className="divide-y">
+              {hiddenLanguages.map((language) => (
+                <li key={language.code} className="flex items-center gap-2 py-2">
+                  <span className="flex-1 truncate" dir={language.dir}>
+                    {language.name}
+                  </span>
+                  <span className="text-xs text-muted-foreground">{language.abbr}</span>
+                  <Badge variant="secondary">{t("languageManager.builtIn")}</Badge>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={busy !== null}
+                    onClick={() => run(language.code, async (code) => restoreLanguage(code))}
+                  >
+                    <PlusIcon />
+                    {t("languageManager.restore")}
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
           {catalogError ? (
             <div className="flex flex-col items-start gap-2 py-2">
               <p className="text-sm text-destructive">{translateMessage(catalogError)}</p>
@@ -142,6 +164,7 @@ export function LanguageManagerDialog({ open, onOpenChange }: LanguageManagerDia
               {t("languageManager.loading")}
             </p>
           ) : available.length === 0 ? (
+            hiddenLanguages.length === 0 &&
             <p className="py-2 text-sm text-muted-foreground">{t("languageManager.noneAvailable")}</p>
           ) : (
             <ul className="divide-y">
