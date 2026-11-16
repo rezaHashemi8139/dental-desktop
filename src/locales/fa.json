@@ -11,8 +11,7 @@
     }
   },
   "app": {
-    "title": "Smart Management Base",
-    "subtitle": "مدیریت کلینیک"
+    "title": "پایگاه مدیریت هوشمند"
   },
   "auth": {
     "tabs": {
