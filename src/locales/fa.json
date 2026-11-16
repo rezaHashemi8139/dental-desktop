@@ -101,7 +101,8 @@
     "about": {
       "title": "درباره",
       "version": "نسخه {{version}}",
-      "description": "نرم‌افزار مدیریت کلینیک"
+      "description": "نرم‌افزار مدیریت کلینیک",
+      "createdBy": "سازنده"
     }
   },
   "theme": {

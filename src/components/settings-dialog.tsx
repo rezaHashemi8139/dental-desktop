@@ -1,5 +1,6 @@
-import type { ReactNode } from "react";
+import type { MouseEvent, ReactNode } from "react";
 import { SettingsIcon } from "lucide-react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { useTranslation } from "react-i18next";
 // Kept up to date by `pnpm build` (scripts/build.mjs), together with tauri.conf.json and Cargo.toml.
 import { version } from "../../package.json";
@@ -8,6 +9,17 @@ import { CurrencySwitcher } from "@/components/currency-switcher";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+
+const CREATOR_NAME = "Reza Hashemi";
+const CREATOR_URL = "https://www.linkedin.com/in/reza-hashemi-487b2566/";
+
+/** Opens a link in the system browser; a plain target="_blank" would open another app window. */
+function openInBrowser(event: MouseEvent<HTMLAnchorElement>) {
+  event.preventDefault();
+  const url = event.currentTarget.href;
+  // Outside Tauri (plain browser) the plugin is missing: fall back to a new tab.
+  openUrl(url).catch(() => window.open(url, "_blank", "noopener,noreferrer"));
+}
 
 /** Header gear button and the dialog with every setting except the theme, which stays in the header. */
 export function SettingsDialog() {
@@ -45,6 +57,20 @@ export function SettingsDialog() {
             {t("settings.about.version", { version })}
           </p>
           <p>{t("settings.about.description")}</p>
+          <p>
+            {t("settings.about.createdBy")}:{" "}
+            <bdi>
+              <a
+                href={CREATOR_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={openInBrowser}
+                className="underline underline-offset-3 hover:text-foreground"
+              >
+                {CREATOR_NAME}
+              </a>
+            </bdi>
+          </p>
         </section>
       </DialogContent>
     </Dialog>
