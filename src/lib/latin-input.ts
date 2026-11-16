@@ -88,6 +88,32 @@ export function latinKeyDown(event: KeyboardEvent<HTMLInputElement>) {
   if (character === null) return;
   event.preventDefault();
   insertText(event.currentTarget, character);
+  blockRestOfKey(event.currentTarget);
+}
+
+/**
+ * Some keys type several characters, e.g. Shift+R on the Windows Persian keyboard
+ * types "ريال". The browser fires one keydown for the first one (cancelled above),
+ * but the rest arrive as text without a keydown of their own. Drop any text typed
+ * until the key is released or another key is pressed.
+ */
+function blockRestOfKey(input: HTMLInputElement) {
+  const block = (event: InputEvent) => {
+    if (event.inputType === "insertText") event.preventDefault();
+  };
+  const stop = () => {
+    input.removeEventListener("beforeinput", block);
+    input.removeEventListener("keyup", stop);
+    input.removeEventListener("keydown", stop);
+    input.removeEventListener("blur", stop);
+  };
+  // Added after insertText, so the Latin character itself is not blocked. A native
+  // keydown listener on the input runs before React's (on the root), so the next
+  // key press is never blocked.
+  input.addEventListener("beforeinput", block);
+  input.addEventListener("keyup", stop);
+  input.addEventListener("keydown", stop);
+  input.addEventListener("blur", stop);
 }
 
 export function latinPaste(event: ClipboardEvent<HTMLInputElement>) {
