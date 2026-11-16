@@ -20,7 +20,7 @@ import { useLanguage } from "./use-language";
  *
  * `minorUnit` says whether that currency is used with small change (cents);
  * left out, the currency's usual decimals apply. The user can pick a fixed
- * currency in the header instead. There is no exchange rate: picking another
+ * currency in Settings instead. There is no exchange rate: picking another
  * currency shows the same stored numbers in it.
  */
 
@@ -47,7 +47,7 @@ const SPECIAL_CURRENCIES: Record<string, Omit<Currency, "id">> = {
   IRT: { iso: "IRR", factor: 10, decimals: 1, named: true },
 };
 
-/** Offered in the header besides the language's own currency. */
+/** Offered in Settings besides the language's own currency. */
 export const CURRENCY_OPTIONS: readonly string[] = ["IRR", "IRT", "USD", "EUR", "GBP", "TRY", "AED"];
 
 const cache = new Map<string, Currency>();

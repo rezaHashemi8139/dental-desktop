@@ -22,7 +22,7 @@ export function languageCalendar(languageCode: string): Calendar {
 
 /**
  * "auto" (the default) follows the language (see LANGUAGE_CALENDARS); the user
- * can pick a fixed calendar from the header instead. Saved on this computer.
+ * can pick a fixed calendar in Settings instead. Saved on this computer.
  */
 export type CalendarChoice = "auto" | Calendar;
 

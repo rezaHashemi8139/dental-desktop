@@ -18,7 +18,7 @@ export function HomePage() {
   const formatDate = useFormatDate();
   const [busy, setBusy] = useState(false);
 
-  // In the language and calendar chosen in the header.
+  // In the language and calendar chosen in Settings.
   const offlineUntil = formatDate(session.offlineUntil * 1000, { dateStyle: "medium", timeStyle: "short" });
   const roleKey = `roles.${session.role}`;
   const role = (t as unknown as (key: string, options: object) => string)(roleKey, { defaultValue: session.role });

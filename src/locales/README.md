@@ -54,6 +54,6 @@ Rules:
 - Values with variables: `"hello": "Hello {{name}}"` → `t("hello", { name })`.
 - Dates and money are display-only per language: see `src/i18n/calendar.ts` and `src/i18n/currency.ts`.
   A language's own currency comes from its `_meta.currency`, e.g. Persian `{"default": "IRT", "minorUnit": false}`
-  (IRT is Toman; anything else is an ISO 4217 code). The header's currency menu follows it ("auto") or
+  (IRT is Toman; anything else is an ISO 4217 code). The currency setting (Settings dialog) follows it ("auto") or
   fixes any other currency. Amounts are stored as plain numbers (Rial, never Toman); show them with
   `useFormatMoney()` and edit them with `<MoneyInput>`, which convert Toman ↔ Rial (×10) for you.

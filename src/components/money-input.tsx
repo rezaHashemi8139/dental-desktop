@@ -12,7 +12,7 @@ interface MoneyInputProps extends Omit<ComponentProps<typeof Input>, "value" | "
 }
 
 /**
- * Amount input in the currency chosen in the header. Takes and returns stored
+ * Amount input in the currency chosen in Settings. Takes and returns stored
  * numbers; the user sees and types the chosen currency (see src/i18n/currency.ts).
  * Accepts Persian, Arabic and Latin digits.
  */
