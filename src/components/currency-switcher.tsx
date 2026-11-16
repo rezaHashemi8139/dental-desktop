@@ -1,6 +1,6 @@
 import { BanknoteIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { useCurrency } from "@/i18n/currency";
+import { useCurrency, useCurrencyName } from "@/i18n/currency";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -12,14 +12,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
-/** Picks the currency amounts are shown and typed in. Hidden when the language has only one. */
+/** Picks the currency amounts are shown and typed in; "auto" follows the language. */
 export function CurrencySwitcher() {
   const { t } = useTranslation();
-  const { currency, currencies, defaultCurrency, setCurrency } = useCurrency();
-  if (currencies.length < 2) return null;
-
-  // Only languages with named currencies (Persian: Rial, Toman) offer a choice today.
-  const name = (id: string) => t(`currency.${id as "IRR" | "IRT"}`);
+  const { choice, currency, languageCurrency, options, setChoice } = useCurrency();
+  const name = useCurrencyName();
 
   return (
     <DropdownMenu>
@@ -32,13 +29,14 @@ export function CurrencySwitcher() {
       <DropdownMenuContent align="end">
         <DropdownMenuLabel>{t("currency.label")}</DropdownMenuLabel>
         <DropdownMenuSeparator />
-        <DropdownMenuRadioGroup value={currency.id} onValueChange={setCurrency}>
-          {currencies.map((item) => (
-            <DropdownMenuRadioItem key={item.id} value={item.id}>
-              {name(item.id)}
-              {item.id === defaultCurrency.id && (
-                <span className="ms-4 text-xs text-muted-foreground">{t("currency.default")}</span>
-              )}
+        <DropdownMenuRadioGroup value={choice} onValueChange={setChoice}>
+          <DropdownMenuRadioItem value="auto">
+            {t("currency.auto")}
+            <span className="ms-4 text-xs text-muted-foreground">{name(languageCurrency.id)}</span>
+          </DropdownMenuRadioItem>
+          {options.map((id) => (
+            <DropdownMenuRadioItem key={id} value={id}>
+              {name(id)}
             </DropdownMenuRadioItem>
           ))}
         </DropdownMenuRadioGroup>

@@ -4,7 +4,7 @@
 //   pnpm sync-locales --check    only report; exits 1 if anything is out of sync
 //
 // `src/locales/fa.json` is the reference. In `dental-server/internal/languages/files`:
-// - fa.json becomes a copy of it;
+// - fa.json becomes a copy of it, `_meta` included (except `version`);
 // - every other file gets the same keys in the same order: keys Persian no longer
 //   has are removed. Missing keys and {{placeholders}} that differ cannot be fixed
 //   automatically (they need a translation), so they are reported and the script
@@ -65,7 +65,7 @@ for (const fileName of readdirSync(serverDir).filter((name) => name.endsWith(".j
     meta.code === referenceMeta.code ? structuredClone(reference) : align(reference, content, "", report);
   const nextMeta =
     meta.code === referenceMeta.code
-      ? { ...meta, name: referenceMeta.name, abbr: referenceMeta.abbr, dir: referenceMeta.dir }
+      ? { ...referenceMeta, version: meta.version } // Name, direction, currency, ... as in the app.
       : meta;
 
   const changed = toText({ _meta: nextMeta, ...aligned }) !== toText({ _meta: meta, ...content });

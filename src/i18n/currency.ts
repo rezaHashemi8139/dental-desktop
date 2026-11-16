@@ -6,17 +6,22 @@ import { useLanguage } from "./use-language";
  * Currencies for showing and entering money.
  *
  * Amounts are always stored, compared and sent to Rust and the server as plain
- * numbers in the language's base unit (its currency with factor 1, e.g. Rial for
- * Persian), whatever currency is shown. A currency only changes how such a number is shown and typed:
+ * numbers. A currency only changes how such a number is shown and typed:
  * `fromStored` turns a stored number into the number the user sees, `toStored`
  * turns what the user typed back into a stored number. Nothing else should apply
- * `factor` by hand.
+ * `factor` by hand. Every currency has factor 1 except Toman: amounts are stored
+ * in Rial, so the stored number 1,250,000 is "1,250,000 ریال" with Rial and
+ * "125,000 تومان" with Toman, and typing 125,000 with Toman saves 1,250,000.
  *
- * Example in Persian: the stored number 1,250,000 is "1,250,000 ریال" with Rial
- * and "125,000 تومان" with Toman; typing 125,000 with Toman saves 1,250,000.
+ * Which currency is used: "auto" (the default) follows the language file's
+ * `_meta.currency` (read in index.ts), e.g. Persian:
  *
- * There is no exchange rate between currencies of different languages: switching
- * from Persian to English shows the same stored numbers with the English currency.
+ *   "currency": { "default": "IRT", "minorUnit": false }
+ *
+ * `minorUnit` says whether that currency is used with small change (cents);
+ * left out, the currency's usual decimals apply. The user can pick a fixed
+ * currency in the header instead. There is no exchange rate: picking another
+ * currency shows the same stored numbers in it.
  */
 
 export interface Currency {
@@ -26,7 +31,7 @@ export interface Currency {
   iso: string;
   /** Stored units per shown unit: Rial 1, Toman 10. */
   factor: number;
-  /** Most decimal places shown and accepted. */
+  /** Most decimal places shown and accepted; 0 when the currency has no small change. */
   decimals: number;
   /**
    * Shown as "<amount> <translated name>" (`currency.<id>` in the language file)
@@ -35,43 +40,40 @@ export interface Currency {
   named?: boolean;
 }
 
-const CURRENCIES = {
-  IRR: { id: "IRR", iso: "IRR", factor: 1, decimals: 0, named: true },
-  // 1 Toman = 10 Rial. One decimal so amounts that are not a multiple of 10 Rial still show exactly.
-  IRT: { id: "IRT", iso: "IRR", factor: 10, decimals: 1, named: true },
-  USD: { id: "USD", iso: "USD", factor: 1, decimals: 2 },
-  EUR: { id: "EUR", iso: "EUR", factor: 1, decimals: 2 },
-} satisfies Record<string, Currency>;
-
-export type CurrencyId = keyof typeof CURRENCIES;
-
-interface LanguageCurrencies {
-  /** Currencies the user can pick from; amounts are stored in the one with factor 1. */
-  currencies: readonly CurrencyId[];
-  /** Used until the user picks another one. */
-  default: CurrencyId;
-}
-
-/** Currencies of each language. A language not listed uses OTHER_LANGUAGES. */
-const LANGUAGE_CURRENCIES: Record<string, LanguageCurrencies> = {
-  // Stored in Rial, shown in Toman by default as people usually say prices in Toman.
-  fa: { currencies: ["IRR", "IRT"], default: "IRT" },
-  en: { currencies: ["USD"], default: "USD" },
-  de: { currencies: ["EUR"], default: "EUR" },
+/** Currencies that need more than Intl knows. Any other id is an ISO 4217 code with factor 1. */
+const SPECIAL_CURRENCIES: Record<string, Omit<Currency, "id">> = {
+  IRR: { iso: "IRR", factor: 1, decimals: 0, named: true },
+  // 1 Toman = 10 Rial: one decimal is the Rial left over (15 Rial = 1.5 Toman).
+  IRT: { iso: "IRR", factor: 10, decimals: 1, named: true },
 };
-const OTHER_LANGUAGES: LanguageCurrencies = { currencies: ["USD"], default: "USD" };
 
-function languageSettings(languageCode: string): LanguageCurrencies {
-  return LANGUAGE_CURRENCIES[languageCode] ?? OTHER_LANGUAGES;
+/** Offered in the header besides the language's own currency. */
+export const CURRENCY_OPTIONS: readonly string[] = ["IRR", "IRT", "USD", "EUR", "GBP", "TRY", "AED"];
+
+const cache = new Map<string, Currency>();
+
+/**
+ * The currency for an id. `minorUnit` false means no small change (0 decimals);
+ * otherwise the currency's usual decimals (Intl's, e.g. USD 2, JPY 0).
+ * Always the same object for the same arguments.
+ */
+export function currencyById(id: string, minorUnit?: boolean): Currency {
+  const key = `${id}:${minorUnit}`;
+  let currency = cache.get(key);
+  if (!currency) {
+    const base = SPECIAL_CURRENCIES[id] ?? { iso: id, factor: 1, decimals: intlDecimals(id) };
+    currency = { id, ...base, decimals: minorUnit === false ? 0 : base.decimals };
+    cache.set(key, currency);
+  }
+  return currency;
 }
 
-export function languageCurrencies(languageCode: string): readonly Currency[] {
-  return languageSettings(languageCode).currencies.map((id) => CURRENCIES[id]);
-}
-
-/** The currency a language starts with, before the user picks one. */
-export function languageDefaultCurrency(languageCode: string): Currency {
-  return CURRENCIES[languageSettings(languageCode).default];
+function intlDecimals(iso: string): number {
+  try {
+    return new Intl.NumberFormat("en", { style: "currency", currency: iso }).resolvedOptions().maximumFractionDigits ?? 2;
+  } catch {
+    return 2; // Not a well-formed code (index.ts already filters these).
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -112,28 +114,31 @@ export function parseAmount(text: string): number | null {
 }
 
 // ---------------------------------------------------------------------------
-// The user's choice (per language, saved on this computer)
+// The user's choice (saved on this computer)
+
+/** "auto" follows the language; any other value is a fixed currency id. */
+export type CurrencyChoice = "auto" | string;
 
 const STORAGE_KEY = "currency";
+const CURRENCY_ID = /^[A-Z]{3}$/;
 
-/** Language code → chosen currency id. */
-let choices: Record<string, string> = readSavedChoices();
+let choice: CurrencyChoice = readSavedChoice();
 const listeners = new Set<() => void>();
 
-function readSavedChoices(): Record<string, string> {
+function readSavedChoice(): CurrencyChoice {
   try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}");
-    if (saved && typeof saved === "object" && !Array.isArray(saved)) return saved;
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved && CURRENCY_ID.test(saved)) return saved;
   } catch {
-    // Storage unavailable or unreadable: use the defaults.
+    // Storage unavailable: use the default.
   }
-  return {};
+  return "auto";
 }
 
-export function setCurrencyChoice(languageCode: string, currencyId: string) {
-  choices = { ...choices, [languageCode]: currencyId };
+export function setCurrencyChoice(next: CurrencyChoice) {
+  choice = next;
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(choices));
+    localStorage.setItem(STORAGE_KEY, next);
   } catch {
     // Storage unavailable: the choice just won't be remembered.
   }
@@ -145,22 +150,40 @@ function subscribe(listener: () => void) {
   return () => listeners.delete(listener);
 }
 
-/**
- * The currencies of the current language, the one in use (the user's pick, else
- * the language's default), the default, and a way to change it.
- */
+/** The user's choice, the currency actually in use, the language's own, the ids to offer, and a setter. */
 export function useCurrency() {
   const { language } = useLanguage();
-  const saved = useSyncExternalStore(subscribe, () => choices);
-  const currencies = languageCurrencies(language.code);
-  const defaultCurrency = languageDefaultCurrency(language.code);
-  const currency = currencies.find((item) => item.id === saved[language.code]) ?? defaultCurrency;
+  const current = useSyncExternalStore(subscribe, () => choice);
+  const { default: languageId, minorUnit } = language.currency;
+  // The language's `minorUnit` belongs to its own currency, also when the user picks that one by hand.
+  const fromLanguage = currencyById(languageId, minorUnit);
+  const currency = current === "auto" || current === languageId ? fromLanguage : currencyById(current);
+  const options = CURRENCY_OPTIONS.includes(languageId) ? CURRENCY_OPTIONS : [languageId, ...CURRENCY_OPTIONS];
   return {
+    choice: current,
     currency,
-    currencies,
-    defaultCurrency,
-    setCurrency: (currencyId: string) => setCurrencyChoice(language.code, currencyId),
+    /** The currency "auto" stands for in the current language. */
+    languageCurrency: fromLanguage,
+    options,
+    setChoice: setCurrencyChoice,
   };
+}
+
+/** Display name of a currency id in the current language: "تومان", "US Dollar", ... */
+export function useCurrencyName() {
+  const { t } = useTranslation();
+  const { language } = useLanguage();
+  return useCallback(
+    (id: string) => {
+      if (SPECIAL_CURRENCIES[id]?.named) return t(`currency.${id as "IRR" | "IRT"}`);
+      try {
+        return new Intl.DisplayNames(language.code, { type: "currency" }).of(id) ?? id;
+      } catch {
+        return id;
+      }
+    },
+    [t, language.code],
+  );
 }
 
 // ---------------------------------------------------------------------------

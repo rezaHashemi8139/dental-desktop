@@ -1,7 +1,7 @@
 # Translations
 
 Each `.json` file is one language and describes itself in its `_meta` section
-(code, full name, abbreviation, direction, version). There are two ways to ship one:
+(code, full name, abbreviation, direction, version, currencies). There are two ways to ship one:
 
 - **Built into the app:** put the file in this folder. It works without the server. Users can remove it
   from the language list (unless it is in use), which only hides it: its text still serves as the fallback,
@@ -40,6 +40,8 @@ Rules:
   - "abbr": a short uppercase label (e.g. "DE")
   - "dir": "rtl" for right-to-left scripts (Arabic, Persian, Hebrew, Urdu), otherwise "ltr"
   - "version": 1
+  - "currency": the money people in that country use: "default" is its ISO 4217 code, "minorUnit"
+    is true if prices there use small change such as cents, else false (e.g. {"default": "EUR", "minorUnit": true})
 - This is a clinic management app: use the standard terms a clinic in that country would use.
 ```
 
@@ -51,5 +53,7 @@ Rules:
 - Use text in components with `const { t } = useTranslation();` then `t("section.key")`.
 - Values with variables: `"hello": "Hello {{name}}"` → `t("hello", { name })`.
 - Dates and money are display-only per language: see `src/i18n/calendar.ts` and `src/i18n/currency.ts`.
-  Amounts are stored as plain numbers in the language's base unit (Rial for Persian); show them with
+  A language's own currency comes from its `_meta.currency`, e.g. Persian `{"default": "IRT", "minorUnit": false}`
+  (IRT is Toman; anything else is an ISO 4217 code). The header's currency menu follows it ("auto") or
+  fixes any other currency. Amounts are stored as plain numbers (Rial, never Toman); show them with
   `useFormatMoney()` and edit them with `<MoneyInput>`, which convert Toman ↔ Rial (×10) for you.

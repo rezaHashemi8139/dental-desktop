@@ -30,10 +30,30 @@ export interface Language {
   dir: TextDirection;
   version: number;
   source: LanguageSource;
+  /** The language's own currency (`_meta.currency`); see src/i18n/currency.ts. */
+  currency: LanguageCurrency;
 }
 
-type LanguageMeta = Partial<Omit<Language, "source">>;
+export interface LanguageCurrency {
+  /** ISO 4217 code, or "IRT" for Toman. */
+  default: string;
+  /** Whether the currency is used with small change (cents); undefined: the currency's usual decimals. */
+  minorUnit?: boolean;
+}
+
+interface LanguageMeta {
+  code?: string;
+  name?: string;
+  abbr?: string;
+  dir?: string;
+  version?: number;
+  currency?: { default?: unknown; minorUnit?: unknown };
+}
 export type LanguageFile = { _meta?: LanguageMeta } & Record<string, unknown>;
+
+/** Currency of a language file without a valid `_meta.currency`. */
+const FALLBACK_CURRENCY = "USD";
+const CURRENCY_ID = /^[A-Z]{3}$/;
 
 /** Used on first launch, before the user has picked a language. */
 const DEFAULT_LANGUAGE = "fa";
@@ -115,7 +135,14 @@ function toLanguage(file: LanguageFile, fallbackCode: string, source: LanguageSo
     dir: meta.dir === "rtl" ? "rtl" : "ltr",
     version: Number(meta.version) || 1,
     source,
+    currency: toCurrency(meta.currency),
   };
+}
+
+/** Reads `_meta.currency`; an invalid code falls back to FALLBACK_CURRENCY, a non-boolean `minorUnit` is ignored. */
+export function toCurrency(meta: LanguageMeta["currency"]): LanguageCurrency {
+  const code = typeof meta?.default === "string" && CURRENCY_ID.test(meta.default) ? meta.default : FALLBACK_CURRENCY;
+  return typeof meta?.minorUnit === "boolean" ? { default: code, minorUnit: meta.minorUnit } : { default: code };
 }
 
 /** Adds or replaces a language. Built-in languages are never replaced by downloads. */
