@@ -46,7 +46,8 @@ Rules:
 ## For developers
 
 - `fa.json` is the reference: new keys are added there first, and TypeScript checks every `t("...")` call against it.
-  Add the same keys to the files in `dental-server/internal/languages/files/` and raise their `version`.
+  Then run `pnpm sync-locales`: it copies `fa.json` to `dental-server/internal/languages/files/`, aligns the other
+  languages there with it (key order, removed keys, `version`) and lists the keys you still have to translate.
 - Use text in components with `const { t } = useTranslation();` then `t("section.key")`.
 - Values with variables: `"hello": "Hello {{name}}"` → `t("hello", { name })`.
 - Dates and money are display-only per language: see `src/i18n/calendar.ts` and `src/i18n/currency.ts`.
