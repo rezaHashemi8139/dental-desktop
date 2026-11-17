@@ -190,6 +190,14 @@ impl Vault {
         self.users.clear();
     }
 
+    /// Keeps only the users whose (hex) id is in `members`: everyone else lost
+    /// access on the server, so loses offline access too. Returns how many were removed.
+    pub fn retain_members(&mut self, members: &[String]) -> usize {
+        let before = self.users.len();
+        self.users.retain(|entry| members.contains(&entry.user_id));
+        before - self.users.len()
+    }
+
     fn aad(&self, user_id: &str) -> Vec<u8> {
         format!("{}/{user_id}", self.installation_id).into_bytes()
     }

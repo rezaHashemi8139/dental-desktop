@@ -43,7 +43,8 @@ hex = "0.4.3"
 x25519-dalek = { version = "3.0.0", features = ["static_secrets"] }
 
 [target."cfg(windows)".dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_Security_Cryptography", "Win32_Foundation"] }
+# NetworkManagement + Networking: the network connectivity hint (connectivity.rs).
+windows-sys = { version = "0.61.2", features = ["Win32_Security_Cryptography", "Win32_Foundation", "Win32_NetworkManagement_IpHelper", "Win32_Networking_WinSock"] }
 winreg = "0.56.0"
 # Same versions Tauri/wry use: to change WebView2 settings Tauri doesn't expose (lockdown.rs).
 webview2-com = "0.39"

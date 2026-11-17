@@ -3,12 +3,13 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
-  Outlet,
   redirect,
 } from "@tanstack/react-router";
+import { checkConnectivity } from "@/auth/connectivity";
 import { connectionStatus, type ConnectionMode } from "@/auth/session";
 import { getSession } from "@/auth/store";
 import { RootLayout } from "@/pages/root-layout";
+import { AppLayout } from "@/pages/app-layout";
 import { AuthLayout, CheckingConnection, LoginPage, RegisterPage } from "@/pages/auth-layout";
 import { HomePage } from "@/pages/home-page";
 
@@ -16,9 +17,9 @@ import { HomePage } from "@/pages/home-page";
  * Pages. A desktop app has no address bar, so history lives in memory.
  *
  * /            → /home or /login
- * /login       ┐ "auth" layout: only when logged out; checks the server first
- * /register    ┘
- * /home        — "app" layout: only when logged in; the session is in route context
+ * /login       ┐ "auth" layout: only when logged out; checks the server first,
+ * /register    ┘ then follows connectivity changes by itself
+ * /home        — "app" layout: only when logged in; pages read the session with useSession()
  *
  * Pages read their route's data with getRouteApi("<route id>") instead of importing this file.
  */
@@ -43,7 +44,13 @@ const authRoute = createRoute({
   },
   // Which login screen to show. Checked on every visit to the login screen
   // (startup, after logout) and on "retry", not when switching login ↔ register.
-  loader: (): Promise<ConnectionMode> => connectionStatus().catch(() => "unavailable" as const),
+  // The check goes through the connectivity store, so the header indicator shows it.
+  // A new object every run, so the layout notices even an unchanged mode (see useLiveMode).
+  loader: (): Promise<{ mode: ConnectionMode }> =>
+    checkConnectivity()
+      .then(() => connectionStatus(false))
+      .catch((): ConnectionMode => "unavailable")
+      .then((mode) => ({ mode })),
   staleTime: Infinity,
   gcTime: 0,
   pendingMs: 200,
@@ -54,9 +61,11 @@ const authRoute = createRoute({
 const loginRoute = createRoute({
   getParentRoute: () => authRoute,
   path: "login",
-  // ?registered=<username> after a successful sign-up.
-  validateSearch: (search: Record<string, unknown>): { registered?: string } =>
-    typeof search.registered === "string" ? { registered: search.registered } : {},
+  // ?registered=<username> after a successful sign-up, plus &setup=true after the clinic setup.
+  validateSearch: (search: Record<string, unknown>): { registered?: string; setup?: true } => {
+    if (typeof search.registered !== "string") return {};
+    return search.setup === true ? { registered: search.registered, setup: true } : { registered: search.registered };
+  },
   component: LoginPage,
 });
 
@@ -72,11 +81,9 @@ const appRoute = createRoute({
   getParentRoute: () => rootRoute,
   id: "app",
   beforeLoad: () => {
-    const session = getSession();
-    if (!session) throw redirect({ to: "/login" });
-    return { session };
+    if (!getSession()) throw redirect({ to: "/login" });
   },
-  component: Outlet,
+  component: AppLayout,
 });
 
 const homeRoute = createRoute({

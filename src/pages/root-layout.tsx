@@ -1,5 +1,6 @@
 import { Outlet } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
+import { ConnectivityIndicator } from "@/components/connectivity-indicator";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { ThemeSwitcher } from "@/components/theme-switcher";
 
@@ -11,6 +12,7 @@ export function RootLayout() {
       <header className="flex items-center justify-between gap-4 border-b px-4 py-2">
         <h1 className="text-sm font-semibold">{t("app.title")}</h1>
         <div className="flex items-center gap-2">
+          <ConnectivityIndicator />
           <ThemeSwitcher />
           <SettingsDialog />
         </div>

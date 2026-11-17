@@ -1,22 +1,23 @@
 import { useState } from "react";
-import { getRouteApi, useNavigate } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
 import { CloudIcon, CloudOffIcon, LogOutIcon, ShieldCheckIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { logout } from "@/auth/session";
-import { setSession } from "@/auth/store";
+import { setSession, useSession } from "@/auth/store";
 import { useFormatDate } from "@/i18n/calendar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 
-const appRoute = getRouteApi("/app");
-
 export function HomePage() {
   const { t } = useTranslation();
-  const { session } = appRoute.useRouteContext();
+  // Live: an offline session that reconnects shows as online right away.
+  const session = useSession();
   const navigate = useNavigate();
   const formatDate = useFormatDate();
   const [busy, setBusy] = useState(false);
+  // The app layout leaves for /login when there is no session.
+  if (!session) return null;
 
   // In the language and calendar chosen in Settings.
   const offlineUntil = formatDate(session.offlineUntil * 1000, { dateStyle: "medium", timeStyle: "short" });

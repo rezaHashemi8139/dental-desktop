@@ -14,12 +14,14 @@ import { Button } from "@/components/ui/button";
 interface LoginFormProps {
   initialUsername?: string;
   notice?: string | null;
+  /** Shown until the next attempt, e.g. why the server ended the last session. */
+  initialError?: RustMessage | null;
   onLoggedIn: (session: Session) => void;
 }
 
-export function LoginForm({ initialUsername = "", notice, onLoggedIn }: LoginFormProps) {
+export function LoginForm({ initialUsername = "", notice, initialError = null, onLoggedIn }: LoginFormProps) {
   const { t } = useTranslation();
-  const [error, setError] = useState<RustMessage | null>(null);
+  const [error, setError] = useState<RustMessage | null>(initialError);
   const {
     register,
     handleSubmit,

@@ -4,6 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { initI18n } from "./i18n";
 import { RouterProvider } from "@tanstack/react-router";
 import { loadSession } from "./auth/store";
+import { initConnectivity } from "./auth/connectivity";
 import { router } from "./router";
 import { DirectionProvider } from "./i18n/direction-provider";
 import { initTheme } from "./theme/theme";
@@ -26,7 +27,8 @@ requestAnimationFrame(() =>
 
 // Languages (including downloaded ones) and the current login must be known
 // before the first render: the router's guards decide the first page from them.
-Promise.all([initI18n(), loadSession()]).then(() => {
+// Connectivity is followed from the start, so no change is missed.
+Promise.all([initI18n(), loadSession(), initConnectivity()]).then(() => {
   ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     <React.StrictMode>
       <DirectionProvider>

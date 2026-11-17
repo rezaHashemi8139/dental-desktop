@@ -1,10 +1,13 @@
-//! Sign-up, login (online or offline) and logout. See dental-server/docs/security-design.md.
+//! Sign-up, login (online or offline), reconnecting and logout. See dental-server/docs/security-design.md.
 //!
 //! Online login: the server checks the credentials and sends the local-database
 //! keys; the database is rekeyed and the vault updated for offline use.
-//! Offline login (only when the server cannot be reached): the vault entry is
-//! unlocked with the user's password, the signed grant must be valid and not
-//! expired, and the clock must not have been turned back.
+//! Offline login (only when the server cannot be reached): the local database must
+//! look usable, the vault entry is unlocked with the user's password (Argon2id),
+//! the signed grant must be valid and not expired, and the clock must not have
+//! been turned back.
+//! Reconnecting: an offline session logs in online by itself once the server is
+//! back (see `reconnect_login` and `switch_online`), without closing the session.
 
 use std::path::{Path, PathBuf};
 
@@ -15,11 +18,12 @@ use serde::Serialize;
 use zeroize::Zeroizing;
 
 use crate::api::{Api, ApiError};
+use crate::connectivity::ConnectivityStatus;
 use crate::message::Message;
 use crate::proto;
 use crate::secure::{self, KeyPair, KEY_LEN};
 use crate::vault::{DatabaseKey, Installation, Vault, VaultEntry};
-use crate::{clock, device, localdb};
+use crate::{clock, localdb, setup};
 
 /// Public key of the server's grant-signing key (Ed25519, base64).
 /// Set DENTAL_SIGNING_PUBLIC_KEY at build time for production.
@@ -61,7 +65,8 @@ pub struct SessionInfo {
     /// Local role (manager, staff, ...), stored in the local database.
     pub role: String,
     pub is_admin: bool,
-    /// Logged in through the server (true) or from the vault (false).
+    /// Logged in through the server (true) or from the vault (false). An offline
+    /// session becomes online once it reconnects.
     pub online: bool,
     /// Until when this user can log in without the server (unix seconds).
     pub offline_until: i64,
@@ -73,13 +78,45 @@ pub struct Session {
     /// Holding the connection keeps the database unlocked; dropping it locks it again.
     #[allow(dead_code)] // used by the clinic features to come
     pub db: Connection,
+    /// Version of the key `db` is encrypted with (as in DatabaseKey).
+    key_version: u32,
     token: Option<Zeroizing<String>>,
+    /// Offline sessions only: the password, kept in memory (wiped on drop) so the
+    /// session can log in online by itself once the server is back. Cleared once
+    /// online, and when reconnecting is given up.
+    reconnect_password: Option<Zeroizing<String>>,
 }
 
 impl Session {
     pub fn token(&self) -> Option<&str> {
         self.token.as_deref().map(String::as_str)
     }
+
+    /// What reconnecting needs, if this is an offline session that can still reconnect.
+    pub fn reconnect_request(&self) -> Option<ReconnectRequest> {
+        let password = self.reconnect_password.as_ref()?;
+        Some(ReconnectRequest {
+            user_id: self.info.user_id.clone(),
+            username: self.info.username.clone(),
+            password: password.clone(),
+        })
+    }
+
+    /// Whether this is still the offline session `request` was made from.
+    pub fn is_waiting_for(&self, request: &ReconnectRequest) -> bool {
+        self.token.is_none() && self.info.user_id == request.user_id
+    }
+
+    pub fn stop_reconnecting(&mut self) {
+        self.reconnect_password = None;
+    }
+}
+
+/// An offline session's credentials, to log in online once the server is back.
+pub struct ReconnectRequest {
+    user_id: String,
+    username: String,
+    password: Zeroizing<String>,
 }
 
 fn err(key: &str) -> Message {
@@ -90,8 +127,8 @@ fn internal(details: impl std::fmt::Display) -> Message {
     Message::error("errors.unknown", details)
 }
 
-/// Maps a server error reason to a translation key.
-fn server_error(code: &str, reason: &str) -> Message {
+/// Maps a server error reason (dental-server/internal/service/common.go) to a translation key.
+pub(crate) fn server_error(code: &str, reason: &str) -> Message {
     match reason {
         "invalid_argument" => err("auth.errors.invalidInput"),
         "invalid_installation" => err("auth.errors.invalidInstallation"),
@@ -101,6 +138,10 @@ fn server_error(code: &str, reason: &str) -> Message {
         "not_a_member" => err("auth.errors.notAMember"),
         "username_taken" => err("auth.errors.usernameTaken"),
         "weak_password" => err("auth.errors.weakPassword"),
+        "license_number_taken" => err("setup.errors.licenseNumberTaken"),
+        "national_id_taken" => err("setup.errors.nationalIdTaken"),
+        "invalid_national_id" => err("setup.errors.invalidNationalId"),
+        "national_id_mismatch" => err("setup.errors.nationalIdMismatch"),
         _ => Message::error("auth.errors.server", format!("{code}: {reason}")),
     }
 }
@@ -110,43 +151,73 @@ fn server_unavailable(code: &str) -> bool {
     matches!(code, "unavailable" | "internal" | "unknown" | "deadline_exceeded" | "resource_exhausted")
 }
 
-/// What the login screen can offer, decided at startup.
+/// Server refusals that end the user's access to this installation, offline included.
+fn access_revoked(reason: &str) -> bool {
+    matches!(reason, "not_a_member" | "user_disabled" | "installation_revoked")
+}
+
+/// What the login screen can offer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ConnectionMode {
     /// The server is reachable: login and sign-up go through it.
     Online,
-    /// No server, but the local database is here with users who can log in offline: login only.
+    /// The server is reachable but this installation was never registered:
+    /// the clinic and its owner must be set up first (setup.rs).
+    Setup,
+    /// No server, but the local database is usable and users can log in offline: login only.
     Offline,
-    /// No server and nothing to log in to locally.
+    /// No server, and users have logged in here before, but the local database
+    /// (or the vault holding its keys) is missing, damaged or unreadable.
+    LocalDatabaseUnavailable,
+    /// No server and nothing to log in to locally (never set up, or nobody logged in online yet).
     Unavailable,
 }
 
-pub async fn connection_mode(ctx: &Context) -> ConnectionMode {
-    match ctx.api.health().await {
-        Ok(health) if health.database_ok => return ConnectionMode::Online,
-        // Login would fail with "unavailable" and fall back to offline anyway.
-        Ok(_) => eprintln!("Server is up but its database is not"),
-        Err(e) => eprintln!("Server not reachable: {e}"),
+/// The login screen for a connectivity status (see connectivity.rs).
+pub fn connection_mode(ctx: &Context, status: &ConnectivityStatus) -> ConnectionMode {
+    if status.is_online() {
+        return if setup::needed(ctx) { ConnectionMode::Setup } else { ConnectionMode::Online };
     }
-    if local_login_possible(ctx) {
-        ConnectionMode::Offline
-    } else {
-        ConnectionMode::Unavailable
+    match local_login_status(ctx) {
+        LocalLogin::Ready => ConnectionMode::Offline,
+        LocalLogin::NobodyYet => ConnectionMode::Unavailable,
+        LocalLogin::Broken(reason) => {
+            eprintln!("Offline login unavailable: {reason}");
+            ConnectionMode::LocalDatabaseUnavailable
+        }
     }
 }
 
-/// Whether the local database exists and someone in the vault holds its key.
-/// The database itself can only be opened with a user's password, so this is
-/// checked again (for real) when they log in.
-fn local_login_possible(ctx: &Context) -> bool {
-    let database_present = std::fs::metadata(ctx.database_path()).map(|m| m.is_file() && m.len() > 0).unwrap_or(false);
-    if !database_present {
-        return false;
+#[derive(Debug, PartialEq, Eq)]
+enum LocalLogin {
+    /// The database looks usable and someone in the vault holds its key.
+    Ready,
+    /// Not set up, or nobody has logged in online here yet.
+    NobodyYet,
+    /// Someone could log in, but the database or the vault is unusable.
+    Broken(String),
+}
+
+/// Whether offline login can work. The database itself can only be opened with
+/// a user's password, so this checks everything that can be checked without it;
+/// opening it for real happens when they log in.
+fn local_login_status(ctx: &Context) -> LocalLogin {
+    let installation = match Installation::load(&ctx.data_dir) {
+        Ok(Some(installation)) => installation,
+        Ok(None) => return LocalLogin::NobodyYet,
+        Err(e) => return LocalLogin::Broken(format!("installation file: {e}")),
+    };
+    let vault = match Vault::load(&ctx.data_dir, &installation.id) {
+        Ok(vault) => vault,
+        Err(e) => return LocalLogin::Broken(format!("vault: {e}")),
+    };
+    if !vault.has_users() {
+        return LocalLogin::NobodyYet;
     }
-    match Installation::load(&ctx.data_dir) {
-        Ok(Some(installation)) => Vault::load(&ctx.data_dir, &installation.id).map(|v| v.has_users()).unwrap_or(false),
-        _ => false,
+    match localdb::check_file(&ctx.database_path()) {
+        Ok(()) => LocalLogin::Ready,
+        Err(e) => LocalLogin::Broken(format!("database: {e}")),
     }
 }
 
@@ -163,21 +234,56 @@ pub async fn sign_up(ctx: &Context, username: &str, password: &str, full_name: &
     }
 }
 
-pub async fn login(ctx: &Context, username: &str, password: &str) -> Result<Session, Message> {
+/// Logs in through the server when `online` (falling back to offline if it turns
+/// out to be unreachable after all), otherwise straight from the vault.
+pub async fn login(ctx: &Context, username: &str, password: &str, online: bool) -> Result<Session, Message> {
     let username = username.trim();
     if username.is_empty() || password.is_empty() {
         return Err(err("auth.errors.invalidCredentials"));
     }
 
-    let installation = match Installation::load(&ctx.data_dir).map_err(internal)? {
-        Some(installation) => installation,
-        None => match register(ctx).await {
-            Ok(installation) => installation,
-            Err(ApiError::Network(_)) => return Err(err("auth.errors.setupNeedsInternet")),
-            Err(ApiError::Server { code, reason }) => return Err(server_error(&code, &reason)),
-        },
-    };
+    // Registered by the setup screen (setup.rs) before anyone can log in.
+    let installation = Installation::load(&ctx.data_dir)
+        .map_err(internal)?
+        .ok_or_else(|| err("setup.errors.required"))?;
 
+    if !online {
+        return login_offline(ctx, &installation, username, password);
+    }
+    match request_login(ctx, &installation, username, password).await {
+        Ok((client_key, response)) => login_online(ctx, &installation, &client_key, password, response).await,
+        Err(ApiError::Network(_)) => login_offline(ctx, &installation, username, password),
+        Err(ApiError::Server { code, .. }) if server_unavailable(&code) => {
+            login_offline(ctx, &installation, username, password)
+        }
+        Err(ApiError::Server { code, reason }) => {
+            revoke_offline_access(ctx, &installation, username, &reason)?;
+            Err(server_error(&code, &reason))
+        }
+    }
+}
+
+/// The server no longer lets this user (or anyone) in: drops their offline access too.
+fn revoke_offline_access(ctx: &Context, installation: &Installation, username: &str, reason: &str) -> Result<(), Message> {
+    if !access_revoked(reason) {
+        return Ok(());
+    }
+    let mut vault = Vault::load(&ctx.data_dir, &installation.id).map_err(internal)?;
+    if reason == "installation_revoked" {
+        vault.clear();
+    } else {
+        vault.remove_username(username);
+    }
+    vault.save().map_err(internal)
+}
+
+/// Sends a login request with a one-time key pair for the database keys.
+async fn request_login(
+    ctx: &Context,
+    installation: &Installation,
+    username: &str,
+    password: &str,
+) -> Result<(KeyPair, proto::LoginResponse), ApiError> {
     let client_key = KeyPair::generate();
     let request = proto::LoginRequest {
         installation_id: installation.id.to_vec(),
@@ -186,40 +292,8 @@ pub async fn login(ctx: &Context, username: &str, password: &str) -> Result<Sess
         password: password.to_owned(),
         client_public_key: client_key.public.to_vec(),
     };
-
-    match ctx.api.login(&request).await {
-        Ok(response) => login_online(ctx, &installation, &client_key, username, password, response).await,
-        Err(ApiError::Network(_)) => login_offline(ctx, &installation, username, password),
-        Err(ApiError::Server { code, .. }) if server_unavailable(&code) => {
-            login_offline(ctx, &installation, username, password)
-        }
-        Err(ApiError::Server { code, reason }) => {
-            // The server no longer lets this user (or anyone) in: drop their offline access too.
-            let mut vault = Vault::load(&ctx.data_dir, &installation.id).map_err(internal)?;
-            match reason.as_str() {
-                "not_a_member" | "user_disabled" => vault.remove_username(username),
-                "installation_revoked" => vault.clear(),
-                _ => {}
-            }
-            vault.save().map_err(internal)?;
-            Err(server_error(&code, &reason))
-        }
-    }
-}
-
-async fn register(ctx: &Context) -> Result<Installation, ApiError> {
-    let response = ctx.api.register(&proto::RegisterRequest { machine: Some(device::machine_info()) }).await?;
-    let installation = Installation {
-        id: response.installation_id.as_slice().try_into().map_err(|_| ApiError::Server {
-            code: "internal".into(),
-            reason: "invalid installation id".into(),
-        })?,
-        secret: Zeroizing::new(response.installation_secret),
-    };
-    installation
-        .save(&ctx.data_dir)
-        .map_err(|e| ApiError::Server { code: "internal".into(), reason: e.to_string() })?;
-    Ok(installation)
+    let response = ctx.api.login(&request).await?;
+    Ok((client_key, response))
 }
 
 fn verify_grant(
@@ -249,15 +323,53 @@ fn to_key(bytes: &[u8]) -> Result<Zeroizing<[u8; KEY_LEN]>, Message> {
     Ok(key)
 }
 
-async fn login_online(
+/// A successful LoginResponse, with the keys opened and the grant verified.
+pub struct OnlineLogin {
+    token: Zeroizing<String>,
+    user: proto::User,
+    is_owner: bool,
+    is_admin: bool,
+    current_version: u32,
+    current: Option<Zeroizing<[u8; KEY_LEN]>>,
+    next: Zeroizing<[u8; KEY_LEN]>,
+    signed_grant: proto::SignedOfflineGrant,
+    grant: proto::OfflineGrant,
+    /// The later of the local clock and the server's (unix seconds).
+    now: i64,
+}
+
+impl OnlineLogin {
+    /// The version of `next`, which the database moves to.
+    fn new_version(&self) -> u32 {
+        self.current_version + 1
+    }
+
+    fn session_info(&self, role: String) -> SessionInfo {
+        SessionInfo {
+            user_id: hex::encode(&self.user.id),
+            username: self.user.username.clone(),
+            full_name: self.user.full_name.clone(),
+            role,
+            is_admin: self.is_admin,
+            online: true,
+            offline_until: seconds(&self.grant.expires_at),
+        }
+    }
+
+    /// Records the login in the local database and returns the user's role there.
+    fn record(&self, db: &Connection) -> Result<String, Message> {
+        let default_role = if self.is_owner { localdb::ROLE_MANAGER } else { localdb::ROLE_STAFF };
+        localdb::record_login(db, &self.user.id, &self.user.username, &self.user.full_name, default_role, self.now)
+            .map_err(internal)
+    }
+}
+
+fn open_login_response(
     ctx: &Context,
     installation: &Installation,
     client_key: &KeyPair,
-    username: &str,
-    password: &str,
     response: proto::LoginResponse,
-) -> Result<Session, Message> {
-    let token = Zeroizing::new(response.session_token);
+) -> Result<OnlineLogin, Message> {
     let user = response.user.ok_or_else(|| internal("login response without user"))?;
     let sealed = response.database_keys.ok_or_else(|| internal("login response without keys"))?;
     let signed_grant = response.offline_grant.ok_or_else(|| internal("login response without grant"))?;
@@ -271,42 +383,97 @@ async fn login_online(
         return Err(err("auth.errors.invalidGrant"));
     }
 
+    Ok(OnlineLogin {
+        token: Zeroizing::new(response.session_token),
+        user,
+        is_owner: response.is_owner,
+        is_admin: response.is_admin,
+        current_version: keys.current_version,
+        current,
+        next,
+        signed_grant,
+        grant,
+        now: clock::now_unix().max(seconds(&response.server_time)),
+    })
+}
+
+async fn login_online(
+    ctx: &Context,
+    installation: &Installation,
+    client_key: &KeyPair,
+    password: &str,
+    response: proto::LoginResponse,
+) -> Result<Session, Message> {
+    let login = open_login_response(ctx, installation, client_key, response)?;
+
     // Open (or create) the database and move it to the next key.
-    let db = open_and_rotate(&ctx.database_path(), current.as_deref(), &next)?;
-    let new_version = keys.current_version + 1;
-    if let Err(e) = ctx.api.confirm_key_rotation(&token, new_version).await {
+    let db = open_and_rotate(&ctx.database_path(), login.current.as_deref(), &login.next)?;
+    let role = login.record(&db)?;
+    finish_online_login(ctx, installation, &login, password).await?;
+
+    // The server's spelling of the username is used from here on.
+    Ok(Session {
+        info: login.session_info(role),
+        db,
+        key_version: login.new_version(),
+        token: Some(login.token),
+        reconnect_password: None,
+    })
+}
+
+/// After the database moved to the next key: keeps offline login working for this
+/// user and every other user of the vault, tells the server, and syncs who may log in.
+async fn finish_online_login(
+    ctx: &Context,
+    installation: &Installation,
+    login: &OnlineLogin,
+    password: &str,
+) -> Result<(), Message> {
+    let database_key = DatabaseKey { version: login.new_version(), key: login.next.clone() };
+    let mut vault = Vault::load(&ctx.data_dir, &installation.id).map_err(internal)?;
+    vault.set_database_key(&database_key).map_err(internal)?;
+    vault
+        .upsert_user(&login.user.id, &login.user.username, password, &login.signed_grant, &database_key)
+        .map_err(internal)?;
+    vault.latest_seen = vault.latest_seen.max(login.now);
+    vault.save().map_err(internal)?;
+    clock::save_registry_last_seen(login.now);
+
+    if let Err(e) = ctx.api.confirm_key_rotation(&login.token, login.new_version()).await {
         // Not fatal: the server keeps sending the same pair, and the next login
         // finds the database already on `next` and confirms then.
         eprintln!("Key rotation not confirmed yet: {e}");
     }
+    sync_members(ctx, installation, &login.token).await;
+    Ok(())
+}
 
-    // Keep offline login working for this user and every other user of the vault.
-    let database_key = DatabaseKey { version: new_version, key: next };
-    let mut vault = Vault::load(&ctx.data_dir, &installation.id).map_err(internal)?;
-    vault.set_database_key(&database_key).map_err(internal)?;
-    vault.upsert_user(&user.id, &user.username, password, &signed_grant, &database_key).map_err(internal)?;
-    let now = clock::now_unix().max(seconds(&response.server_time));
-    vault.latest_seen = vault.latest_seen.max(now);
-    vault.save().map_err(internal)?;
-    clock::save_registry_last_seen(now);
-
-    let default_role = if response.is_owner { localdb::ROLE_MANAGER } else { localdb::ROLE_STAFF };
-    let role = localdb::record_login(&db, &user.id, &user.username, &user.full_name, default_role, now).map_err(internal)?;
-
-    let _ = username; // the server's spelling of the username is used from here on
-    Ok(Session {
-        info: SessionInfo {
-            user_id: hex::encode(&user.id),
-            username: user.username,
-            full_name: user.full_name,
-            role,
-            is_admin: response.is_admin,
-            online: true,
-            offline_until: seconds(&grant.expires_at),
-        },
-        db,
-        token: Some(token),
-    })
+/// Drops the offline access of users who are no longer members of this
+/// installation, so a user removed on the server cannot keep logging in offline.
+async fn sync_members(ctx: &Context, installation: &Installation, token: &str) {
+    let members = match ctx.api.list_members(token).await {
+        Ok(response) => response.members,
+        Err(e) => {
+            eprintln!("Member list not synced: {e}");
+            return;
+        }
+    };
+    let ids: Vec<String> = members.iter().filter_map(|m| m.user.as_ref()).map(|u| hex::encode(&u.id)).collect();
+    // The caller is a member, so an empty list is a broken answer: never empty the vault for it.
+    if ids.is_empty() {
+        return;
+    }
+    let result = Vault::load(&ctx.data_dir, &installation.id).and_then(|mut vault| {
+        let removed = vault.retain_members(&ids);
+        if removed > 0 {
+            eprintln!("Removed offline access of {removed} former member(s)");
+            vault.save()?;
+        }
+        Ok(())
+    });
+    if let Err(e) = result {
+        eprintln!("Member list not synced: {e}");
+    }
 }
 
 /// Opens the database with the current key and rekeys it to `next`, or creates it.
@@ -338,7 +505,16 @@ fn open_and_rotate(path: &Path, current: Option<&[u8; KEY_LEN]>, next: &[u8; KEY
 }
 
 fn login_offline(ctx: &Context, installation: &Installation, username: &str, password: &str) -> Result<Session, Message> {
-    let mut vault = Vault::load(&ctx.data_dir, &installation.id).map_err(internal)?;
+    // Checked first, so a missing or damaged database is reported as such.
+    localdb::check_file(&ctx.database_path()).map_err(|e| {
+        eprintln!("Offline login refused, database unusable: {e}");
+        err("auth.errors.databaseUnavailable")
+    })?;
+
+    let mut vault = Vault::load(&ctx.data_dir, &installation.id).map_err(|e| {
+        eprintln!("Offline login refused, vault unreadable: {e}");
+        err("auth.errors.databaseUnavailable")
+    })?;
     let entry: VaultEntry = vault.find(username).cloned().ok_or_else(|| err("auth.errors.offlineNotAvailable"))?;
     let pair = vault.unlock(&entry, password).map_err(|_| err("auth.errors.invalidCredentials"))?;
 
@@ -381,8 +557,92 @@ fn login_offline(ctx: &Context, installation: &Installation, username: &str, pas
             offline_until: expires_at,
         },
         db,
+        key_version: database_key.version,
         token: None,
+        reconnect_password: Some(Zeroizing::new(password.to_owned())),
     })
+}
+
+/// Why reconnecting an offline session did not work.
+pub enum ReconnectError {
+    /// The server is unreachable again, or had a temporary problem: try again later.
+    Later(String),
+    /// The server refused (e.g. the password was changed there): stop trying.
+    /// The session stays offline until the user logs in again.
+    GiveUp(Message),
+    /// The server no longer lets this user in: the session must end.
+    Revoked(Message),
+}
+
+/// The network half of reconnecting: logs in online with the offline session's
+/// credentials. Changes nothing locally except revoking offline access when the
+/// server says so; `switch_online` then applies the result to the open session.
+pub async fn reconnect_login(ctx: &Context, request: &ReconnectRequest) -> Result<(Installation, OnlineLogin), ReconnectError> {
+    let installation = match Installation::load(&ctx.data_dir) {
+        Ok(Some(installation)) => installation,
+        Ok(None) => return Err(ReconnectError::GiveUp(err("setup.errors.required"))),
+        Err(e) => return Err(ReconnectError::GiveUp(internal(e))),
+    };
+
+    let (client_key, response) = match request_login(ctx, &installation, &request.username, &request.password).await {
+        Ok(result) => result,
+        Err(ApiError::Network(e)) => return Err(ReconnectError::Later(e)),
+        Err(ApiError::Server { code, reason }) if server_unavailable(&code) => {
+            return Err(ReconnectError::Later(format!("{code}: {reason}")));
+        }
+        Err(ApiError::Server { code, reason }) => {
+            if let Err(e) = revoke_offline_access(ctx, &installation, &request.username, &reason) {
+                eprintln!("Could not revoke offline access: {}", e.key);
+            }
+            let message = server_error(&code, &reason);
+            return Err(if access_revoked(&reason) { ReconnectError::Revoked(message) } else { ReconnectError::GiveUp(message) });
+        }
+    };
+
+    let login = open_login_response(ctx, &installation, &client_key, response).map_err(ReconnectError::GiveUp)?;
+    if hex::encode(&login.user.id) != request.user_id {
+        return Err(ReconnectError::GiveUp(err("auth.errors.invalidGrant")));
+    }
+    Ok((installation, login))
+}
+
+/// Turns the open offline session into an online one, keeping its database
+/// connection open: the database is rekeyed in place to the server's next key.
+/// Call while holding the session; it does no network work.
+pub fn switch_online(ctx: &Context, session: &mut Session, login: &OnlineLogin) -> Result<(), Message> {
+    if session.key_version == login.current_version {
+        localdb::rekey(&session.db, &login.next).map_err(internal)?;
+        // Prove the new key works before the server is told.
+        drop(localdb::open(&ctx.database_path(), &login.next).map_err(internal)?);
+    } else if session.key_version != login.new_version() {
+        // Already on `next` is fine (an earlier rotation was never confirmed); anything else is not.
+        return Err(internal(format!(
+            "database key version {} does not match the server's {}",
+            session.key_version, login.current_version
+        )));
+    }
+
+    let role = login.record(&session.db)?;
+    session.info = login.session_info(role);
+    session.key_version = login.new_version();
+    session.token = Some(login.token.clone());
+    session.reconnect_password = None;
+    Ok(())
+}
+
+/// The local half of reconnecting, after `switch_online`: vault, key confirmation, members.
+pub async fn finish_reconnect(
+    ctx: &Context,
+    installation: &Installation,
+    login: &OnlineLogin,
+    request: &ReconnectRequest,
+) -> Result<(), Message> {
+    finish_online_login(ctx, installation, login, &request.password).await
+}
+
+/// Ends a server session nobody uses (a reconnect whose session was closed meanwhile).
+pub async fn discard_login(ctx: &Context, login: OnlineLogin) {
+    let _ = ctx.api.logout(&login.token).await;
 }
 
 /// Ends the session on the server (if online) and closes the database.
@@ -390,7 +650,7 @@ pub async fn logout(ctx: &Context, session: Session) {
     if let Some(token) = session.token() {
         let _ = ctx.api.logout(token).await;
     }
-    drop(session); // closes the database; the token is wiped on drop
+    drop(session); // closes the database; the token and password are wiped on drop
 }
 
 /// Full flow against a running development server:
@@ -410,6 +670,23 @@ mod e2e {
         format!("{name}{}", clock::now_unix() % 1_000_000)
     }
 
+    /// A national ID with a valid check digit, different for each `n` below 10^8.
+    fn national_id(n: u64) -> String {
+        let digits = format!("1{:08}", n % 100_000_000);
+        let sum: u32 = digits.bytes().enumerate().map(|(i, d)| u32::from(d - b'0') * (10 - i as u32)).sum();
+        let check = match sum % 11 {
+            r if r < 2 => r,
+            r => 11 - r,
+        };
+        format!("{digits}{check}")
+    }
+
+    /// The login screen as the app would decide it: after a real connectivity check.
+    async fn mode(ctx: &Context) -> ConnectionMode {
+        let status = crate::connectivity::Watcher::new(ctx.api.clone()).refresh().await;
+        connection_mode(ctx, &status)
+    }
+
     #[test]
     #[ignore = "needs the development server"]
     fn e2e_online_and_offline_login() {
@@ -418,36 +695,89 @@ mod e2e {
 
     async fn flow() {
         let online = context("online");
-        assert_eq!(connection_mode(&online).await, ConnectionMode::Online);
+        assert_eq!(mode(&online).await, ConnectionMode::Setup);
         let doctor = unique("doctor");
-        sign_up(&online, &doctor, "doctor-password", "Dr. Test").await.unwrap();
+        let error = login(&online, &doctor, "Doctor-passw0rd", true).await.err().unwrap();
+        assert_eq!(error.key, "setup.errors.required");
 
-        // First login: becomes owner, database is created.
-        let session = login(&online, &doctor, "doctor-password").await.unwrap();
+        // Setup registers the clinic with a new owner account.
+        let clinic = setup::ClinicInput {
+            name: "Test clinic".into(),
+            license_number: unique("E2E-"),
+            phone: "02112345678".into(),
+            city: "Tehran".into(),
+            address: "1 Test Street".into(),
+            postal_code: String::new(),
+        };
+        let owner = setup::OwnerInput::New(setup::NewOwnerInput {
+            username: doctor.clone(),
+            password: "Doctor-passw0rd".into(),
+            full_name: "Dr. Test".into(),
+            national_id: national_id(clock::now_unix() as u64),
+            phone: "09121234567".into(),
+        });
+        assert_eq!(setup::setup(&online, &clinic, &owner).await.unwrap(), doctor);
+        assert_eq!(mode(&online).await, ConnectionMode::Online);
+        let error = setup::setup(&online, &clinic, &owner).await.err().unwrap();
+        assert_eq!(error.key, "setup.errors.alreadyDone");
+
+        // First login: already owner, database is created.
+        let session = login(&online, &doctor, "Doctor-passw0rd", true).await.unwrap();
         assert!(session.info.online && session.info.is_admin);
         assert_eq!(session.info.role, localdb::ROLE_MANAGER);
         assert!(session.info.offline_until > clock::now_unix() + 6 * 24 * 3600);
+        assert!(session.reconnect_request().is_none(), "online sessions keep no password");
         logout(&online, session).await;
 
         // Second login rotates the key; the database still opens.
-        let session = login(&online, &doctor, "doctor-password").await.unwrap();
+        let session = login(&online, &doctor, "Doctor-passw0rd", true).await.unwrap();
         logout(&online, session).await;
 
-        assert!(login(&online, &doctor, "wrong-password").await.is_err());
+        assert!(login(&online, &doctor, "wrong-password", true).await.is_err());
 
         // Same installation, server unreachable: offline login from the vault.
         let offline = Context::new(online.data_dir.clone(), Api::new("http://127.0.0.1:9"));
-        assert_eq!(connection_mode(&offline).await, ConnectionMode::Offline);
+        assert_eq!(mode(&offline).await, ConnectionMode::Offline);
         let nothing_here = Context::new(context("empty").data_dir, Api::new("http://127.0.0.1:9"));
-        assert_eq!(connection_mode(&nothing_here).await, ConnectionMode::Unavailable);
-        let session = login(&offline, &doctor, "doctor-password").await.unwrap();
+        assert_eq!(mode(&nothing_here).await, ConnectionMode::Unavailable);
+
+        let error = login(&offline, &doctor, "wrong-password", false).await.err().unwrap();
+        assert_eq!(error.key, "auth.errors.invalidCredentials");
+        let error = login(&offline, "someone-else", "whatever-password", false).await.err().unwrap();
+        assert_eq!(error.key, "auth.errors.offlineNotAvailable");
+
+        let mut session = login(&offline, &doctor, "Doctor-passw0rd", false).await.unwrap();
         assert!(!session.info.online);
         assert_eq!(session.info.role, localdb::ROLE_MANAGER, "role read from the local database");
+
+        // The server is back: the open offline session reconnects in place.
+        let request = session.reconnect_request().expect("offline session can reconnect");
+        let (installation, reconnected) = match reconnect_login(&online, &request).await {
+            Ok(result) => result,
+            Err(_) => panic!("reconnect login failed"),
+        };
+        assert!(session.is_waiting_for(&request));
+        switch_online(&online, &mut session, &reconnected).unwrap();
+        finish_reconnect(&online, &installation, &reconnected, &request).await.unwrap();
+        assert!(session.info.online && session.token().is_some());
+        assert!(session.reconnect_request().is_none(), "password wiped once online");
+        // The same connection keeps working after the rekey.
+        localdb::record_login(&session.db, &[9; 16], "someone", "Some One", localdb::ROLE_STAFF, clock::now_unix()).unwrap();
+        logout(&online, session).await;
+
+        // Keys stay consistent afterwards, online and offline.
+        let session = login(&online, &doctor, "Doctor-passw0rd", true).await.unwrap();
+        logout(&online, session).await;
+        let session = login(&offline, &doctor, "Doctor-passw0rd", false).await.unwrap();
         drop(session);
 
-        let error = login(&offline, &doctor, "wrong-password").await.err().unwrap();
-        assert_eq!(error.key, "auth.errors.invalidCredentials");
-        let error = login(&offline, "someone-else", "whatever-password").await.err().unwrap();
-        assert_eq!(error.key, "auth.errors.offlineNotAvailable");
+        // A damaged database: offline login is refused, with its own screen.
+        let path = offline.database_path();
+        let mut bytes = std::fs::read(&path).unwrap();
+        bytes.truncate(1000);
+        std::fs::write(&path, bytes).unwrap();
+        assert_eq!(mode(&offline).await, ConnectionMode::LocalDatabaseUnavailable);
+        let error = login(&offline, &doctor, "Doctor-passw0rd", false).await.err().unwrap();
+        assert_eq!(error.key, "auth.errors.databaseUnavailable");
     }
 }

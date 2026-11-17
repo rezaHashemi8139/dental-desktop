@@ -1,11 +1,34 @@
 //! The encrypted local database (SQLCipher). Patient data and the users of this
 //! installation with their roles live here.
 
+use std::io::Read as _;
 use std::path::Path;
 
 use rusqlite::{params, Connection, OptionalExtension};
 
 pub const DATABASE_FILE: &str = "clinic.db";
+
+/// The first bytes of an unencrypted SQLite file. An encrypted file starts with random bytes.
+const PLAIN_SQLITE_HEADER: &[u8; 16] = b"SQLite format 3\0";
+/// Every SQLite page size is a multiple of this, and the file is made of whole pages.
+const MIN_PAGE_SIZE: u64 = 512;
+
+/// Checks, without the key, that the database file looks usable: present,
+/// readable, made of whole pages, and encrypted. Only opening it with the key
+/// (at login) proves it fully.
+pub fn check_file(path: &Path) -> Result<(), String> {
+    let mut file = std::fs::File::open(path).map_err(|e| format!("cannot open {}: {e}", path.display()))?;
+    let len = file.metadata().map_err(|e| e.to_string())?.len();
+    if len == 0 || len % MIN_PAGE_SIZE != 0 {
+        return Err(format!("{} has an invalid size ({len} bytes)", path.display()));
+    }
+    let mut header = [0u8; 16];
+    file.read_exact(&mut header).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    if &header == PLAIN_SQLITE_HEADER {
+        return Err(format!("{} is not encrypted", path.display()));
+    }
+    Ok(())
+}
 
 /// Roles stored locally. Permissions per role come later; the owner starts as manager.
 pub const ROLE_MANAGER: &str = "manager";
@@ -118,5 +141,52 @@ mod tests {
         let conn = open(&path, &key2).unwrap();
         // The role stays as stored, even if a different default is passed later.
         assert_eq!(record_login(&conn, &[7; 16], "doctor", "Dr. A", ROLE_STAFF, 200).unwrap(), ROLE_MANAGER);
+    }
+
+    /// Reconnecting an offline session (auth::switch_online) rekeys the connection it keeps open.
+    #[test]
+    fn open_connection_keeps_working_after_rekey() {
+        let dir = std::env::temp_dir().join(format!("dental-localdb-rekey-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join(DATABASE_FILE);
+        let (key1, key2) = ([3u8; 32], [4u8; 32]);
+
+        let conn = create(&path, &key1).unwrap();
+        record_login(&conn, &[1; 16], "doctor", "Dr. A", ROLE_MANAGER, 100).unwrap();
+        rekey(&conn, &key2).unwrap();
+        // The same connection reads and writes on.
+        record_login(&conn, &[2; 16], "nurse", "N. B", ROLE_STAFF, 200).unwrap();
+        let count: i64 = conn.query_row("SELECT count(*) FROM users", [], |row| row.get(0)).unwrap();
+        assert_eq!(count, 2);
+
+        // Meanwhile only the new key opens the file.
+        assert!(open(&path, &key1).is_err());
+        drop(open(&path, &key2).unwrap());
+        drop(conn);
+        let conn = open(&path, &key2).unwrap();
+        let count: i64 = conn.query_row("SELECT count(*) FROM users", [], |row| row.get(0)).unwrap();
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn check_file_without_key() {
+        let dir = std::env::temp_dir().join(format!("dental-localdb-check-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join(DATABASE_FILE);
+
+        assert!(check_file(&path).is_err(), "missing");
+        drop(create(&path, &[5u8; 32]).unwrap());
+        assert_eq!(check_file(&path), Ok(()));
+
+        let mut truncated = std::fs::read(&path).unwrap();
+        truncated.truncate(100);
+        std::fs::write(&path, &truncated).unwrap();
+        assert!(check_file(&path).is_err(), "truncated");
+
+        std::fs::write(&path, [PLAIN_SQLITE_HEADER.as_slice(), &[0u8; 4096 - 16]].concat()).unwrap();
+        assert!(check_file(&path).is_err(), "not encrypted");
+
+        std::fs::write(&path, []).unwrap();
+        assert!(check_file(&path).is_err(), "empty");
     }
 }

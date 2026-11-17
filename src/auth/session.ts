@@ -17,10 +17,14 @@ export interface Session {
 /**
  * What the login screen can offer (see ConnectionMode in src-tauri/src/auth.rs):
  * - "online": the server is reachable; login and sign-up go through it.
- * - "offline": no server, but this computer has the clinic database and users who logged in before: login only.
+ * - "setup": the server is reachable but this computer was never set up: the clinic
+ *   and its owner must be registered first (src/auth/setup.ts).
+ * - "offline": no server, but the local database is usable and users have logged in here before: login only.
+ * - "localDatabaseUnavailable": no server, and the local database (or the vault with its keys) is
+ *   missing, damaged or unreadable: no offline login.
  * - "unavailable": no server and nothing to log in to locally.
  */
-export type ConnectionMode = "online" | "offline" | "unavailable";
+export type ConnectionMode = "online" | "setup" | "offline" | "localDatabaseUnavailable" | "unavailable";
 
 // Each call throws a RustMessage (see src/i18n/message.ts) on failure.
 // The server is only ever contacted from Rust.
@@ -29,8 +33,12 @@ export function currentSession(): Promise<Session | null> {
   return invoke<Session | null>("current_session");
 }
 
-export function connectionStatus(): Promise<ConnectionMode> {
-  return invoke<ConnectionMode>("connection_status");
+/**
+ * The login screen for the current connectivity. With `refresh`, the server is
+ * checked first; otherwise the watcher's latest status is used (src/auth/connectivity.ts).
+ */
+export function connectionStatus(refresh: boolean): Promise<ConnectionMode> {
+  return invoke<ConnectionMode>("connection_status", { refresh });
 }
 
 export function login(username: string, password: string): Promise<Session> {

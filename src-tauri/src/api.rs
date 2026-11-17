@@ -133,6 +133,11 @@ impl Api {
         self.call("AuthService", "ConfirmKeyRotation", &request, Some(token)).await
     }
 
+    /// Who may log in on the session's installation. Any member may call it.
+    pub async fn list_members(&self, token: &str) -> Result<proto::ListMembersResponse, ApiError> {
+        self.call("MemberService", "ListMembers", &proto::ListMembersRequest {}, Some(token)).await
+    }
+
     /// Short timeout: it also runs while the app closes, which must not hang when the server is down.
     pub async fn logout(&self, token: &str) -> Result<proto::LogoutResponse, ApiError> {
         self.call_with_timeout("AuthService", "Logout", &proto::LogoutRequest {}, Some(token), LOGOUT_TIMEOUT)
