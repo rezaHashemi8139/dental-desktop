@@ -158,6 +158,8 @@ function register(file: LanguageFile, fallbackCode: string, source: LanguageSour
   if (i18n.hasResourceBundle(language.code, NAMESPACE)) i18n.removeResourceBundle(language.code, NAMESPACE);
   i18n.addResourceBundle(language.code, NAMESPACE, file, false, true);
   setLanguages([...allLanguages.filter((item) => item.code !== language.code), language]);
+  // Replacing the bundle alone doesn't redraw anything: re-apply the language in use.
+  if (language.code === i18n.resolvedLanguage) void i18n.changeLanguage(language.code);
   return language;
 }
 
@@ -181,6 +183,33 @@ export function fetchLanguageCatalog(): Promise<CatalogEntry[]> {
 export async function installLanguage(code: string): Promise<void> {
   const file = await invoke<LanguageFile>("install_language", { code });
   register(file, code, "installed");
+}
+
+/**
+ * Downloads every installed language the server has a newer version of. A copy
+ * downloaded before new text was added lacks those keys, so they would show in
+ * the fallback language. Best effort: offline or failed updates are only logged.
+ */
+async function updateInstalledLanguages(): Promise<void> {
+  let catalog: CatalogEntry[];
+  try {
+    catalog = await fetchLanguageCatalog();
+  } catch (error) {
+    console.warn("[i18n] Could not check for language updates:", error);
+    return;
+  }
+  const outdated = allLanguages.filter(
+    (language) =>
+      language.source === "installed" &&
+      catalog.some((entry) => entry.code === language.code && entry.version > language.version),
+  );
+  for (const language of outdated) {
+    try {
+      await installLanguage(language.code);
+    } catch (error) {
+      console.warn(`[i18n] Could not update language "${language.code}":`, error);
+    }
+  }
 }
 
 /**
@@ -261,6 +290,9 @@ export async function initI18n(): Promise<void> {
 
   i18n.on("languageChanged", applyLanguage);
   await i18n.changeLanguage(initial);
+
+  // In the background: the app starts with the copies it has, updated text follows.
+  void updateInstalledLanguages();
 }
 
 export default i18n;
