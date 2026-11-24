@@ -43,6 +43,9 @@ sysinfo = "0.40.3"
 base64 = "0.23.1"
 hex = "0.4.3"
 x25519-dalek = { version = "3.0.0", features = ["static_secrets"] }
+# Self-update: downloads, verifies (minisign) and installs new versions (update.rs).
+# native-tls like reqwest above, instead of its default rustls.
+tauri-plugin-updater = { version = "2", default-features = false, features = ["native-tls", "system-proxy"] }
 
 [target."cfg(windows)".dependencies]
 # NetworkManagement + Networking: the network connectivity hint (connectivity.rs).
@@ -56,7 +59,4 @@ windows-core = "0.62"
 # Argon2 is deliberately expensive (see secure.rs). Unoptimized it is many times
 # slower, so it is optimized in debug builds too: offline login and tests stay quick.
 [profile.dev.package.argon2]
-opt-level = 3
-
-[profile.dev.package.blake2]
 opt-level = 3

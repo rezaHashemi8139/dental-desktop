@@ -24,14 +24,21 @@ export function RegisterForm({ onRegistered }: RegisterFormProps) {
     formState: { errors, isSubmitting },
   } = useForm<RegisterValues>({
     resolver: zodResolver(registerSchema),
-    defaultValues: { fullName: "", username: "", password: "", confirmPassword: "" },
+    defaultValues: { fullName: "", nationalId: "", phone: "", username: "", password: "", confirmPassword: "" },
   });
 
   // `values` are already checked and trimmed by the schema.
   async function submit(values: RegisterValues) {
     setError(null);
     try {
-      await signUp(values.username, values.password, values.fullName);
+      await signUp({
+        username: values.username,
+        password: values.password,
+        fullName: values.fullName,
+        identityType: "national",
+        identity: values.nationalId,
+        phone: values.phone,
+      });
       onRegistered(values.username);
     } catch (e) {
       setError(toRustMessage(e));
@@ -54,6 +61,25 @@ export function RegisterForm({ onRegistered }: RegisterFormProps) {
         maxLength={100}
         autoFocus
         {...register("fullName")}
+      />
+      <FormField
+        id="register-national-id"
+        label={t("setup.fields.nationalId")}
+        error={fieldError(errors.nationalId)}
+        inputMode="numeric"
+        maxLength={10}
+        latin
+        {...register("nationalId")}
+      />
+      <FormField
+        id="register-phone"
+        type="tel"
+        label={t("setup.fields.ownerPhone")}
+        error={fieldError(errors.phone)}
+        autoComplete="tel"
+        maxLength={16}
+        latin
+        {...register("phone")}
       />
       <FormField
         id="register-username"

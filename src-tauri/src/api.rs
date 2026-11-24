@@ -20,6 +20,14 @@ const HEALTH_TIMEOUT: Duration = Duration::from_secs(5);
 /// Logging out is best effort; the server token expires on its own anyway.
 const LOGOUT_TIMEOUT: Duration = Duration::from_secs(3);
 
+/// This app's version, sent with every call.
+pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+const APP_VERSION_HEADER: &str = "Dental-App-Version";
+/// The server's reason for refusing an app older than its minimum version.
+pub const UPDATE_REQUIRED: &str = "update_required";
+/// Pushes and pulls may carry up to 500 records.
+const SYNC_TIMEOUT: Duration = Duration::from_secs(60);
+
 #[derive(Debug)]
 pub enum ApiError {
     /// The server could not be reached (no internet, server down, timeout).
@@ -85,6 +93,8 @@ impl Api {
             .timeout(timeout)
             .header("Content-Type", "application/proto")
             .header("Connect-Protocol-Version", "1")
+            // The server refuses apps older than its minimum version (update.rs).
+            .header(APP_VERSION_HEADER, APP_VERSION)
             .body(request.encode_to_vec());
         if let Some(token) = session_token {
             builder = builder.bearer_auth(token);
@@ -147,6 +157,32 @@ impl Api {
     /// Downloadable interface languages. No session needed.
     pub async fn list_languages(&self) -> Result<proto::ListLanguagesResponse, ApiError> {
         self.call("LanguageService", "ListLanguages", &proto::ListLanguagesRequest {}, None).await
+    }
+
+    /// The server address, e.g. for the updater's endpoint (update.rs).
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
+    /// Sends changed patients and treatments (sync.rs).
+    pub async fn push(&self, token: &str, request: &proto::PushRequest) -> Result<proto::PushResponse, ApiError> {
+        self.call_with_timeout("SyncService", "Push", request, Some(token), SYNC_TIMEOUT).await
+    }
+
+    /// Fetches the clinic's records changed after `since_revision` (sync.rs).
+    pub async fn pull(&self, token: &str, since_revision: i64) -> Result<proto::PullResponse, ApiError> {
+        let request = proto::PullRequest { since_revision };
+        self.call_with_timeout("SyncService", "Pull", &request, Some(token), SYNC_TIMEOUT).await
+    }
+
+    /// A patient's history in every clinic. The server logs the view.
+    pub async fn patient_history(
+        &self,
+        token: &str,
+        identity: proto::PersonIdentity,
+    ) -> Result<proto::GetPatientHistoryResponse, ApiError> {
+        let request = proto::GetPatientHistoryRequest { identity: Some(identity) };
+        self.call("PatientService", "GetPatientHistory", &request, Some(token)).await
     }
 
     pub async fn get_language(&self, code: &str) -> Result<proto::GetLanguageResponse, ApiError> {

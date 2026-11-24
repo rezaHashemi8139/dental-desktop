@@ -17,6 +17,14 @@ pub fn now_unix() -> i64 {
         .unwrap_or(0)
 }
 
+/// Unix time in milliseconds: for synced records, whose latest change wins.
+pub fn now_millis() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
 /// True if `now` is not earlier than any of `known_times` (minus [`TOLERANCE`]).
 pub fn is_plausible(now: i64, known_times: &[i64]) -> bool {
     let latest = known_times.iter().copied().max().unwrap_or(0);

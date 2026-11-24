@@ -13,6 +13,9 @@ const PROTO_FILES: &[&str] = &[
     "dental/v1/installation.proto",
     "dental/v1/language.proto",
     "dental/v1/member.proto",
+    "dental/v1/patient.proto",
+    "dental/v1/person.proto",
+    "dental/v1/sync.proto",
 ];
 
 fn main() {

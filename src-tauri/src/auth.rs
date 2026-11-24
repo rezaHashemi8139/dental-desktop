@@ -10,16 +10,18 @@
 //! back (see `reconnect_login` and `switch_online`), without closing the session.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use base64::Engine as _;
 use prost::Message as _;
 use rusqlite::Connection;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use crate::api::{Api, ApiError};
 use crate::connectivity::ConnectivityStatus;
 use crate::message::Message;
+use crate::person::{self, Identity};
 use crate::proto;
 use crate::secure::{self, KeyPair, KEY_LEN};
 use crate::vault::{DatabaseKey, Installation, Vault, VaultEntry};
@@ -86,13 +88,31 @@ pub struct Session {
     reconnect_password: Option<Zeroizing<String>>,
     /// Wrong account passwords in a row, given for sensitive actions (`verify_password`).
     wrong_passwords: u32,
+    /// Changes whenever the data in `db` is replaced as a whole (restore, clearing),
+    /// and differs between sessions: a sync whose request was sent before such a
+    /// change drops its answer (sync.rs).
+    data_epoch: u64,
 }
 
 /// After this many wrong account passwords in a row for sensitive actions, the
 /// session is logged out.
 pub const MAX_WRONG_PASSWORDS: u32 = 3;
 
+fn next_data_epoch() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
 impl Session {
+    pub fn data_epoch(&self) -> u64 {
+        self.data_epoch
+    }
+
+    /// The data was replaced as a whole (restore, clearing).
+    pub fn data_replaced(&mut self) {
+        self.data_epoch = next_data_epoch();
+    }
+
     pub fn token(&self) -> Option<&str> {
         self.token.as_deref().map(String::as_str)
     }
@@ -173,9 +193,16 @@ pub(crate) fn server_error(code: &str, reason: &str) -> Message {
         "username_taken" => err("auth.errors.usernameTaken"),
         "weak_password" => err("auth.errors.weakPassword"),
         "license_number_taken" => err("setup.errors.licenseNumberTaken"),
-        "national_id_taken" => err("setup.errors.nationalIdTaken"),
-        "invalid_national_id" => err("setup.errors.invalidNationalId"),
-        "national_id_mismatch" => err("setup.errors.nationalIdMismatch"),
+        "identity_taken" => err("person.errors.identityTaken"),
+        "invalid_national_id" => err("person.errors.invalidNationalId"),
+        "identity_mismatch" => err("person.errors.identityMismatch"),
+        "no_clinic" => err("auth.errors.noClinic"),
+        "password_change_required" => err("auth.errors.passwordChangeRequired"),
+        "subscription_inactive" => err("auth.errors.subscriptionInactive"),
+        "clinic_limit_exceeded" => err("auth.errors.clinicLimitExceeded"),
+        "device_limit_exceeded" => err("auth.errors.deviceLimitExceeded"),
+        "patient_not_found" => err("patients.errors.historyNotFound"),
+        crate::api::UPDATE_REQUIRED => err(crate::update::REQUIRED_ERROR),
         _ => Message::error("auth.errors.server", format!("{code}: {reason}")),
     }
 }
@@ -185,9 +212,36 @@ fn server_unavailable(code: &str) -> bool {
     matches!(code, "unavailable" | "internal" | "unknown" | "deadline_exceeded" | "resource_exhausted")
 }
 
-/// Server refusals that end the user's access to this installation, offline included.
+/// Server refusals that end the user's access to this installation, offline included:
+/// no longer a member, account or computer blocked, or the clinic's subscription
+/// no longer covers it.
 fn access_revoked(reason: &str) -> bool {
-    matches!(reason, "not_a_member" | "user_disabled" | "installation_revoked")
+    matches!(
+        reason,
+        "not_a_member"
+            | "user_disabled"
+            | "installation_revoked"
+            | "no_clinic"
+            | "subscription_inactive"
+            | "clinic_limit_exceeded"
+            | "device_limit_exceeded"
+    )
+}
+
+/// A new account, as typed in the sign-up form (src/auth/session.ts).
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SignUpInput {
+    pub username: String,
+    pub password: String,
+    pub full_name: String,
+    #[serde(default)]
+    pub identity_type: Identity,
+    pub identity: String,
+    /// Only for foreign nationals.
+    #[serde(default)]
+    pub nationality: String,
+    pub phone: String,
 }
 
 /// What the login screen can offer.
@@ -255,11 +309,13 @@ fn local_login_status(ctx: &Context) -> LocalLogin {
     }
 }
 
-pub async fn sign_up(ctx: &Context, username: &str, password: &str, full_name: &str) -> Result<(), Message> {
+pub async fn sign_up(ctx: &Context, account: &SignUpInput) -> Result<(), Message> {
     let request = proto::SignUpRequest {
-        username: username.trim().to_owned(),
-        password: password.to_owned(),
-        full_name: full_name.trim().to_owned(),
+        username: account.username.trim().to_owned(),
+        password: account.password.clone(),
+        full_name: account.full_name.trim().to_owned(),
+        identity: Some(person::to_proto(account.identity_type, &account.identity, &account.nationality)?),
+        phone: account.phone.trim().to_owned(),
     };
     match ctx.api.sign_up(&request).await {
         Ok(_) => Ok(()),
@@ -453,6 +509,7 @@ async fn login_online(
         token: Some(login.token),
         reconnect_password: None,
         wrong_passwords: 0,
+        data_epoch: next_data_epoch(),
     })
 }
 
@@ -596,6 +653,7 @@ fn login_offline(ctx: &Context, installation: &Installation, username: &str, pas
         token: None,
         reconnect_password: Some(Zeroizing::new(password.to_owned())),
         wrong_passwords: 0,
+        data_epoch: next_data_epoch(),
     })
 }
 
@@ -749,7 +807,9 @@ mod e2e {
             username: doctor.clone(),
             password: "Doctor-passw0rd".into(),
             full_name: "Dr. Test".into(),
-            national_id: national_id(clock::now_unix() as u64),
+            identity_type: Identity::National,
+            identity: national_id(clock::now_unix() as u64),
+            nationality: String::new(),
             phone: "09121234567".into(),
         });
         assert_eq!(setup::setup(&online, &clinic, &owner).await.unwrap(), doctor);
@@ -837,6 +897,7 @@ mod e2e {
             token: None,
             reconnect_password: None,
             wrong_passwords: 0,
+            data_epoch: next_data_epoch(),
         };
         assert_eq!(MAX_WRONG_PASSWORDS, 3);
         assert_eq!(session.wrong_password(), 2);

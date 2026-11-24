@@ -72,6 +72,7 @@ export function SetupForm({ onDone }: SetupFormProps) {
       address: values.address,
       postalCode: values.postalCode,
     };
+    const identity = { identityType: "national", identity: values.nationalId } as const;
     const owner: OwnerInput =
       values.ownerKind === "new"
         ? {
@@ -79,10 +80,10 @@ export function SetupForm({ onDone }: SetupFormProps) {
             username: values.username,
             password: values.password,
             fullName: values.fullName,
-            nationalId: values.nationalId,
             phone: values.ownerPhone,
+            ...identity,
           }
-        : { kind: "existing", username: values.username, password: values.password, nationalId: values.nationalId };
+        : { kind: "existing", username: values.username, password: values.password, ...identity };
     try {
       onDone(await setupClinic(clinic, owner));
     } catch (e) {

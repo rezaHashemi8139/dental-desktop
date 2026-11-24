@@ -17,10 +17,21 @@ export interface ClinicInput {
   postalCode: string;
 }
 
+/**
+ * How a person is identified (src-tauri/src/person.rs): Iranian citizens by national ID,
+ * foreign nationals by their FIDA code plus their nationality (ISO 3166-1 alpha-2).
+ * National IDs need no nationality: it is always "IR".
+ */
+export interface PersonIdentityInput {
+  identityType: "national" | "foreign";
+  identity: string;
+  nationality?: string;
+}
+
 /** Who is responsible for the clinic: a new account, or an existing one proven with its password. */
 export type OwnerInput =
-  | { kind: "new"; username: string; password: string; fullName: string; nationalId: string; phone: string }
-  | { kind: "existing"; username: string; password: string; nationalId: string };
+  | ({ kind: "new"; username: string; password: string; fullName: string; phone: string } & PersonIdentityInput)
+  | ({ kind: "existing"; username: string; password: string } & PersonIdentityInput);
 
 /** Returns the owner's username, as the server spells it. Throws a RustMessage on failure. */
 export function setupClinic(clinic: ClinicInput, owner: OwnerInput): Promise<string> {

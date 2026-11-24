@@ -31,9 +31,15 @@ export const loginSchema = z.object({
 });
 export type LoginValues = z.infer<typeof loginSchema>;
 
+const phone = z.string().trim().regex(PHONE_PATTERN, message("setup.validation.phoneFormat"));
+const nationalId = z.string().trim().refine(isValidNationalId, message("setup.validation.nationalIdFormat"));
+
+/** Every account has an identity (unique across the system) and a mobile number. */
 export const registerSchema = z
   .object({
     fullName: requiredText,
+    nationalId,
+    phone,
     username,
     password: newPassword,
     confirmPassword: z.string(),
@@ -42,8 +48,6 @@ export const registerSchema = z
 export type RegisterValues = z.infer<typeof registerSchema>;
 
 // --- First-start setup (src/pages/setup-form.tsx) ---------------------------
-
-const phone = z.string().trim().regex(PHONE_PATTERN, message("setup.validation.phoneFormat"));
 
 /** Fields of the setup form whatever kind of owner is chosen. */
 const setupFields = {
@@ -54,7 +58,7 @@ const setupFields = {
   address: requiredText,
   postalCode: z.string().trim().regex(POSTAL_CODE_PATTERN, message("setup.validation.postalCodeFormat")),
   ownerKind: z.enum(["new", "existing"]),
-  nationalId: z.string().trim().refine(isValidNationalId, message("setup.validation.nationalIdFormat")),
+  nationalId,
 };
 
 /**

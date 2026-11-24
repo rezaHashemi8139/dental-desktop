@@ -10,6 +10,7 @@ use crate::api::ApiError;
 use crate::auth::{server_error, Context};
 use crate::device;
 use crate::message::Message;
+use crate::person::{self, Identity};
 use crate::proto;
 use crate::vault::Installation;
 
@@ -42,7 +43,12 @@ pub struct NewOwnerInput {
     pub username: String,
     pub password: String,
     pub full_name: String,
-    pub national_id: String,
+    #[serde(default)]
+    pub identity_type: Identity,
+    pub identity: String,
+    /// Only for foreign nationals.
+    #[serde(default)]
+    pub nationality: String,
     pub phone: String,
 }
 
@@ -51,7 +57,11 @@ pub struct NewOwnerInput {
 pub struct ExistingOwnerInput {
     pub username: String,
     pub password: String,
-    pub national_id: String,
+    #[serde(default)]
+    pub identity_type: Identity,
+    pub identity: String,
+    #[serde(default)]
+    pub nationality: String,
 }
 
 fn trimmed(s: &str) -> String {
@@ -72,22 +82,22 @@ impl ClinicInput {
 }
 
 impl OwnerInput {
-    fn to_proto(&self) -> proto::register_request::Owner {
+    fn to_proto(&self) -> Result<proto::register_request::Owner, Message> {
         use proto::register_request::Owner;
-        match self {
+        Ok(match self {
             OwnerInput::New(o) => Owner::NewOwner(proto::NewOwner {
                 username: trimmed(&o.username),
                 password: o.password.clone(),
                 full_name: trimmed(&o.full_name),
-                national_id: trimmed(&o.national_id),
+                identity: Some(person::to_proto(o.identity_type, &o.identity, &o.nationality)?),
                 phone: trimmed(&o.phone),
             }),
             OwnerInput::Existing(o) => Owner::ExistingOwner(proto::ExistingOwner {
                 username: trimmed(&o.username),
                 password: o.password.clone(),
-                national_id: trimmed(&o.national_id),
+                identity: Some(person::to_proto(o.identity_type, &o.identity, &o.nationality)?),
             }),
-        }
+        })
     }
 }
 
@@ -105,8 +115,8 @@ pub async fn setup(ctx: &Context, clinic: &ClinicInput, owner: &OwnerInput) -> R
 
     let request = proto::RegisterRequest {
         machine: Some(device::machine_info()),
-        clinic: Some(clinic.to_proto()),
-        owner: Some(owner.to_proto()),
+        target: Some(proto::register_request::Target::Clinic(clinic.to_proto())),
+        owner: Some(owner.to_proto()?),
     };
     let response = match ctx.api.register(&request).await {
         Ok(response) => response,

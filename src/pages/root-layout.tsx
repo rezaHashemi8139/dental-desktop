@@ -3,11 +3,19 @@ import { Outlet } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { ConnectivityIndicator } from "@/components/connectivity-indicator";
 import { SettingsDialog } from "@/components/settings-dialog";
+import { SyncIndicator } from "@/components/sync-indicator";
 import { ThemeSwitcher } from "@/components/theme-switcher";
+import { UpdateButton } from "@/components/update-button";
+import { UpdateRequiredScreen } from "@/components/update-required-screen";
+import { useUpdate } from "@/lib/update";
 
-/** Header around every page; the pages fill the rest of the window. */
+/**
+ * Header around every page; the pages fill the rest of the window. While this
+ * version must be updated (a forced update), the update screen replaces every page.
+ */
 export function RootLayout() {
   const { t } = useTranslation();
+  const { status: update } = useUpdate();
   return (
     <div className="flex h-svh flex-col">
       <header className="flex items-center justify-between gap-4 border-b px-4 py-2">
@@ -16,6 +24,8 @@ export function RootLayout() {
           <h1 className="text-sm font-semibold">{t("app.title")}</h1>
         </div>
         <div className="flex items-center gap-2">
+          <UpdateButton />
+          <SyncIndicator />
           <ConnectivityIndicator />
           <ThemeSwitcher />
           <SettingsDialog />
@@ -24,7 +34,13 @@ export function RootLayout() {
 
       {/* Layouts fill it: a centered PageArea, plus the sidebar once logged in. */}
       <main className="flex min-h-0 flex-1">
-        <Outlet />
+        {update.required ? (
+          <PageArea>
+            <UpdateRequiredScreen />
+          </PageArea>
+        ) : (
+          <Outlet />
+        )}
       </main>
     </div>
   );

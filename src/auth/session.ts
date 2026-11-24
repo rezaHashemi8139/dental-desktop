@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { PersonIdentityInput } from "./setup";
 
 /** The logged-in user (see SessionInfo in src-tauri/src/auth.rs). */
 export interface Session {
@@ -45,8 +46,16 @@ export function login(username: string, password: string): Promise<Session> {
   return invoke<Session>("login", { username, password });
 }
 
-export function signUp(username: string, password: string, fullName: string): Promise<void> {
-  return invoke("sign_up", { username, password, fullName });
+/** A new account (see SignUpInput in src-tauri/src/auth.rs). */
+export interface SignUpInput extends PersonIdentityInput {
+  username: string;
+  password: string;
+  fullName: string;
+  phone: string;
+}
+
+export function signUp(account: SignUpInput): Promise<void> {
+  return invoke("sign_up", { account });
 }
 
 export function logout(): Promise<void> {

@@ -8,10 +8,14 @@ mod languages;
 mod localdb;
 mod lockdown;
 mod message;
+mod patients;
+mod person;
 mod proto;
 mod secure;
 mod settings;
 mod setup;
+mod sync;
+mod update;
 mod vault;
 
 use std::path::PathBuf;
@@ -40,6 +44,166 @@ struct AuthState {
     /// rotate the database key, write the vault or copy the database. A second request while one
     /// runs is refused instead of queued (no duplicate logins).
     busy: tauri::async_runtime::Mutex<()>,
+    /// Sends the clinic's changes to the server and fetches the others' (sync.rs).
+    syncer: sync::Syncer,
+    /// New versions and forced updates (update.rs).
+    updates: update::Updates,
+}
+
+/// Runs `work` on the open session. For commands that read or change clinic data.
+fn with_session<T>(state: &AuthState, work: impl FnOnce(&Session) -> Result<T, Message>) -> Result<T, Message> {
+    let guard = state.session.lock().unwrap();
+    work(guard.as_ref().ok_or_else(|| Message::new("errors.notLoggedIn"))?)
+}
+
+/// Syncs in the background: after a local change, a login, and every connectivity
+/// check while online. Never while this version must be updated first.
+fn request_sync(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let state = app.state::<AuthState>();
+        let online = state.session.lock().unwrap().as_ref().is_some_and(|s| s.token().is_some());
+        if !online || state.updates.is_required() {
+            // Nothing to send to yet; the change still counts as waiting.
+            let _ = app.emit(sync::EVENT, state.syncer.status(&state.session));
+            return;
+        }
+        let result = state
+            .syncer
+            .sync(&state.ctx.api, &state.session, |status| {
+                let _ = app.emit(sync::EVENT, status);
+            })
+            .await;
+        if let Err(e) = result {
+            if e.is_update_required() {
+                update_required_by_server(&app, &state);
+            }
+        }
+    });
+}
+
+/// The server refused a call because this version is too old.
+fn update_required_by_server(app: &AppHandle, state: &AuthState) {
+    if state.updates.server_requires_update() {
+        let _ = app.emit(update::EVENT, state.updates.status());
+    }
+}
+
+#[tauri::command]
+fn update_status(state: State<'_, AuthState>) -> update::UpdateStatus {
+    state.updates.status()
+}
+
+/// Looks for a new version now.
+#[tauri::command]
+async fn check_for_update(app: AppHandle, state: State<'_, AuthState>) -> Result<update::UpdateStatus, Message> {
+    Ok(state.updates.check(&app, state.ctx.api.base_url()).await)
+}
+
+/// Installs the version found by the last check. Logs out first, so the database
+/// is closed and locked before the installer replaces the app; changes not synced
+/// yet stay marked in it and are sent after the restart.
+#[tauri::command]
+async fn install_update(app: AppHandle, state: State<'_, AuthState>) -> Result<(), Message> {
+    let Ok(_busy) = state.busy.try_lock() else {
+        return Err(Message::new("auth.errors.busy"));
+    };
+    let session = state.session.lock().unwrap().take();
+    if let Some(session) = session {
+        auth::logout(&state.ctx, session).await;
+        let _ = app.emit(SESSION_ENDED_EVENT, Message::new("update.loggedOut"));
+    }
+    state.updates.install(&app).await
+}
+
+#[tauri::command]
+fn sync_status(state: State<'_, AuthState>) -> sync::SyncStatus {
+    state.syncer.status(&state.session)
+}
+
+/// Syncs now (the "sync" button), in the background; progress comes as "sync" events.
+#[tauri::command]
+fn sync_now(app: AppHandle) {
+    request_sync(&app);
+}
+
+#[tauri::command]
+fn list_patients(state: State<'_, AuthState>, query: String) -> Result<Vec<patients::PatientRecord>, Message> {
+    with_session(&state, |session| patients::list_patients(&session.db, &query))
+}
+
+#[tauri::command]
+fn get_patient(state: State<'_, AuthState>, id: String) -> Result<Option<patients::PatientRecord>, Message> {
+    let Ok(id) = hex::decode(&id) else { return Ok(None) };
+    with_session(&state, |session| patients::get_patient(&session.db, &id))
+}
+
+/// Adds or updates a patient (see patients::save_patient) and syncs it.
+#[tauri::command]
+fn save_patient(
+    app: AppHandle,
+    state: State<'_, AuthState>,
+    id: Option<String>,
+    patient: patients::PatientInput,
+) -> Result<patients::PatientRecord, Message> {
+    let saved = with_session(&state, |session| {
+        patients::save_patient(&session.db, id.as_deref(), &patient, clock::now_millis())
+    })?;
+    request_sync(&app);
+    Ok(saved)
+}
+
+#[tauri::command]
+fn list_treatments(state: State<'_, AuthState>, patient_id: String) -> Result<Vec<patients::TreatmentRecord>, Message> {
+    with_session(&state, |session| patients::list_treatments(&session.db, &patient_id))
+}
+
+/// Adds (no `id`) or updates a treatment and syncs it.
+#[tauri::command]
+fn save_treatment(
+    app: AppHandle,
+    state: State<'_, AuthState>,
+    id: Option<String>,
+    treatment: patients::TreatmentInput,
+) -> Result<patients::TreatmentRecord, Message> {
+    let saved = with_session(&state, |session| {
+        patients::save_treatment(&session.db, id.as_deref(), &treatment, clock::now_millis())
+    })?;
+    request_sync(&app);
+    Ok(saved)
+}
+
+#[tauri::command]
+fn delete_treatment(app: AppHandle, state: State<'_, AuthState>, id: String) -> Result<(), Message> {
+    with_session(&state, |session| patients::delete_treatment(&session.db, &id, clock::now_millis()))?;
+    request_sync(&app);
+    Ok(())
+}
+
+/// A patient's history in every clinic, from the server (online only). The server
+/// logs who looked.
+#[tauri::command]
+async fn patient_history(
+    app: AppHandle,
+    state: State<'_, AuthState>,
+    identity_type: patients::Identity,
+    identity: String,
+    nationality: String,
+) -> Result<patients::PatientHistory, Message> {
+    let request = person::to_proto(identity_type, &identity, &nationality)?;
+    let token = with_session(&state, |session| {
+        session.token().map(str::to_owned).ok_or_else(|| Message::new("patients.errors.historyNeedsServer"))
+    })?;
+    match state.ctx.api.patient_history(&token, request).await {
+        Ok(response) => Ok(patients::history_from_proto(response)),
+        Err(api::ApiError::Network(e)) => Err(Message::error("errors.network", e)),
+        Err(api::ApiError::Server { code, reason }) => {
+            if reason == api::UPDATE_REQUIRED {
+                update_required_by_server(&app, &state);
+            }
+            Err(auth::server_error(&code, &reason))
+        }
+    }
 }
 
 #[tauri::command]
@@ -85,16 +249,20 @@ async fn setup_clinic(
 }
 
 #[tauri::command]
-async fn sign_up(state: State<'_, AuthState>, username: String, password: String, full_name: String) -> Result<Message, Message> {
-    auth::sign_up(&state.ctx, &username, &password, &full_name).await?;
+async fn sign_up(state: State<'_, AuthState>, account: auth::SignUpInput) -> Result<Message, Message> {
+    auth::sign_up(&state.ctx, &account).await?;
     Ok(Message::new("auth.signUpSuccess"))
 }
 
 #[tauri::command]
-async fn login(state: State<'_, AuthState>, username: String, password: String) -> Result<SessionInfo, Message> {
+async fn login(app: AppHandle, state: State<'_, AuthState>, username: String, password: String) -> Result<SessionInfo, Message> {
     let Ok(_busy) = state.busy.try_lock() else {
         return Err(Message::new("auth.errors.busy"));
     };
+    // Offline too: a version the server has stopped must be updated first.
+    if state.updates.is_required() {
+        return Err(Message::new(update::REQUIRED_ERROR));
+    }
     // A new login replaces the previous one.
     if let Some(previous) = state.session.lock().unwrap().take() {
         drop(previous);
@@ -102,7 +270,11 @@ async fn login(state: State<'_, AuthState>, username: String, password: String) 
 
     // The watcher decides online or offline; a stale "not online" is checked again first.
     let online = state.watcher.status().is_online() || state.watcher.refresh().await.is_online();
-    let session = auth::login(&state.ctx, &username, &password, online).await?;
+    let session = auth::login(&state.ctx, &username, &password, online).await.inspect_err(|e| {
+        if e.key == update::REQUIRED_ERROR {
+            update_required_by_server(&app, &state);
+        }
+    })?;
     if online && !session.info.online {
         // The server went away since the last check: let everyone know now.
         let watcher = Arc::clone(&state.watcher);
@@ -111,6 +283,8 @@ async fn login(state: State<'_, AuthState>, username: String, password: String) 
 
     let info = session.info.clone();
     *state.session.lock().unwrap() = Some(session);
+    // Changes made offline go out now, and what other installations changed comes in.
+    request_sync(&app);
     Ok(info)
 }
 
@@ -133,7 +307,7 @@ async fn run_database_action<T>(
     app: &AppHandle,
     state: &AuthState,
     account_password: &str,
-    action: impl FnOnce(&Session) -> Result<T, Message>,
+    action: impl FnOnce(&mut Session) -> Result<T, Message>,
 ) -> Result<T, Message> {
     // Never during a login or a reconnect, which may rekey the database.
     let Ok(_busy) = state.busy.try_lock() else {
@@ -207,9 +381,18 @@ async fn restore_database(
     let account_password = Zeroizing::new(account_password);
     let (password, recovery_key) = (Zeroizing::new(password), Zeroizing::new(recovery_key));
     run_database_action(&app, &state, &account_password, |session| {
-        backup::restore(&session.db, &session.info, &state.ctx.data_dir, &path, &password, &recovery_key, mode)
+        backup::restore(&session.db, &session.info, &state.ctx.data_dir, &path, &password, &recovery_key, mode)?;
+        // The restored data is not what the server last saw: all of it is synced again,
+        // and a sync running meanwhile drops its answer.
+        session.data_replaced();
+        if let Err(e) = sync::resync_all(&session.db) {
+            eprintln!("Restored, but not marked for syncing: {e}");
+        }
+        Ok(())
     })
-    .await
+    .await?;
+    request_sync(&app);
+    Ok(())
 }
 
 /// Deletes all clinic data on this computer, then logs out: the manager logs in
@@ -217,7 +400,12 @@ async fn restore_database(
 #[tauri::command]
 async fn clear_database(app: AppHandle, state: State<'_, AuthState>, account_password: String) -> Result<(), Message> {
     let account_password = Zeroizing::new(account_password);
-    run_database_action(&app, &state, &account_password, |session| backup::clear(&session.db, &session.info)).await?;
+    run_database_action(&app, &state, &account_password, |session| {
+        backup::clear(&session.db, &session.info)?;
+        session.data_replaced();
+        Ok(())
+    })
+    .await?;
     let session = state.session.lock().unwrap().take();
     if let Some(session) = session {
         auth::logout(&state.ctx, session).await;
@@ -233,9 +421,31 @@ fn on_connectivity(app: &AppHandle, status: ConnectivityStatus, changed: bool) {
             eprintln!("Could not send the connectivity status: {e}");
         }
     }
+    let state = app.state::<AuthState>();
+    if let Some(minimum) = state.watcher.minimum_app_version() {
+        if state.updates.set_minimum(&minimum) {
+            eprintln!("Minimum app version from the server: {minimum:?}; update required: {}", state.updates.is_required());
+            let _ = app.emit(update::EVENT, state.updates.status());
+        }
+    }
     if status.is_online() {
-        let app = app.clone();
-        tauri::async_runtime::spawn(async move { reconnect(app).await });
+        if state.updates.check_due() {
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                let state = app.state::<AuthState>();
+                state.updates.check(&app, state.ctx.api.base_url()).await;
+            });
+        }
+        if !state.updates.is_required() {
+            let online_session = state.session.lock().unwrap().as_ref().is_some_and(|s| s.token().is_some());
+            if online_session {
+                // Brings in what the clinic's other installations changed.
+                request_sync(app);
+            } else {
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move { reconnect(app).await });
+            }
+        }
     }
 }
 
@@ -307,6 +517,8 @@ async fn reconnect(app: AppHandle) {
             }
             eprintln!("Offline session of {} is online again", info.username);
             let _ = app.emit(SESSION_EVENT, info);
+            // What was changed offline goes to the server now.
+            request_sync(&app);
         }
     }
 }
@@ -325,15 +537,19 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        // Its endpoint (the server's address) is set when checking (update.rs).
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             let api = api::Api::new(settings::server_url(&data_dir));
             let watcher = Watcher::new(api.clone());
             app.manage(AuthState {
+                updates: update::Updates::new(&data_dir),
                 ctx: Context::new(data_dir, api),
                 watcher: Arc::clone(&watcher),
                 session: Mutex::new(None),
                 busy: tauri::async_runtime::Mutex::new(()),
+                syncer: sync::Syncer::new(),
             });
             let handle = app.handle().clone();
             watcher.start(move |status, changed| on_connectivity(&handle, status, changed));
@@ -365,6 +581,18 @@ pub fn run() {
             restore_database,
             clear_database,
             open_devtools,
+            update_status,
+            check_for_update,
+            install_update,
+            sync_status,
+            sync_now,
+            list_patients,
+            get_patient,
+            save_patient,
+            list_treatments,
+            save_treatment,
+            delete_treatment,
+            patient_history,
             languages::get_language_catalog,
             languages::list_installed_languages,
             languages::install_language,

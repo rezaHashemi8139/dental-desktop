@@ -202,7 +202,68 @@ const MIGRATIONS: &[&str] = &[
         created_at    INTEGER NOT NULL,   -- unix seconds
         last_login_at INTEGER
     );",
+    // 2: patients and treatments, synced with the server (sync.rs), and where pulling stopped.
+    // `sync_state` is one of the SYNC_* values below.
+    "CREATE TABLE patients (
+        id            BLOB PRIMARY KEY,   -- derived from the identity (patients::patient_id), 16 bytes
+        identity_type TEXT NOT NULL,      -- 'national' or 'foreign'
+        identity      TEXT NOT NULL,      -- national ID, or a foreign national's FIDA code
+        nationality   TEXT NOT NULL,      -- ISO 3166-1 alpha-2, 'IR' for national IDs
+        first_name    TEXT NOT NULL,
+        last_name     TEXT NOT NULL,
+        birth_date    TEXT NOT NULL DEFAULT '',  -- Gregorian YYYY-MM-DD, or ''
+        gender        TEXT NOT NULL DEFAULT '',  -- '', 'male' or 'female'
+        phone         TEXT NOT NULL DEFAULT '',
+        address       TEXT NOT NULL DEFAULT '',
+        medical_notes TEXT NOT NULL DEFAULT '',
+        created_at    INTEGER NOT NULL,   -- unix milliseconds
+        updated_at    INTEGER NOT NULL,   -- unix milliseconds; the latest change wins when syncing
+        sync_state    TEXT NOT NULL DEFAULT 'new'
+    );
+    CREATE UNIQUE INDEX patients_identity ON patients (identity_type, identity);
+    CREATE TABLE treatments (
+        id           BLOB PRIMARY KEY,    -- random, 16 bytes
+        -- Not a foreign key: a pull may bring a treatment a page before its patient.
+        patient_id   BLOB NOT NULL,
+        performed_by BLOB,                -- server user id of who performed it, if given
+        performed_at INTEGER NOT NULL,    -- unix milliseconds
+        tooth        TEXT NOT NULL DEFAULT '',
+        procedure    TEXT NOT NULL,
+        notes        TEXT NOT NULL DEFAULT '',
+        created_at   INTEGER NOT NULL,    -- unix milliseconds
+        updated_at   INTEGER NOT NULL,    -- unix milliseconds; the latest change wins when syncing
+        deleted_at   INTEGER,             -- kept as a tombstone until synced, so the deletion syncs too
+        sync_state   TEXT NOT NULL DEFAULT 'new'
+    );
+    CREATE INDEX treatments_patient ON treatments (patient_id, performed_at);
+    CREATE TABLE sync_cursors (
+        scope    TEXT PRIMARY KEY,        -- what was pulled, e.g. 'clinic'
+        revision INTEGER NOT NULL         -- PullResponse.revision of the last pull
+    );",
 ];
+
+/// `sync_state` of a synced record that the server has never stored: new here, or
+/// refused so far. A patient's identity may still change (see patients::save_patient).
+pub const SYNC_NEW: &str = "new";
+/// Changed here since the server last stored it: waits to be sent.
+pub const SYNC_CHANGED: &str = "changed";
+/// The same as on the server, as far as this computer knows.
+pub const SYNC_SYNCED: &str = "synced";
+/// The server refused it (PushResponse.rejected): not sent again until it is changed.
+pub const SYNC_REJECTED: &str = "rejected";
+
+/// Tables whose rows are sent to the server (sync.rs). Each has `updated_at` and `sync_state`.
+pub const SYNCED_TABLES: &[&str] = &["patients", "treatments"];
+
+/// Tables that never leave this computer: who may log in here and their roles,
+/// sync bookkeeping, and **every financial table** (fees, payments, balances,
+/// debts...). Financial data must never reach the server, so a financial table
+/// always goes here, never in SYNCED_TABLES.
+///
+/// Every table must be in exactly one of the two lists; a test checks it, so a
+/// new table cannot be added without deciding whether it is synced.
+#[allow(dead_code)] // Read by the test that checks every table is classified.
+pub const LOCAL_ONLY_TABLES: &[&str] = &["users", "sync_cursors"];
 
 /// The schema version this app writes: how many migrations it has.
 pub fn latest_schema_version() -> i64 {
@@ -338,6 +399,34 @@ mod tests {
         let target = open(&target_path, &other_key).unwrap();
         assert!(replace_contents(&target, &copy_path, &key).is_err());
         assert_eq!(user_names(&target), ["doctor", "nurse"]);
+    }
+
+    /// Every table is either synced or local-only, and nothing that looks financial is synced.
+    #[test]
+    fn every_table_is_classified_for_sync() {
+        let dir = std::env::temp_dir().join(format!("dental-localdb-classify-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let conn = create(&dir.join(DATABASE_FILE), &[9u8; 32]).unwrap();
+
+        let mut tables = table_names(&conn, "main").unwrap();
+        tables.sort();
+        let mut classified: Vec<String> =
+            SYNCED_TABLES.iter().chain(LOCAL_ONLY_TABLES).map(|t| t.to_string()).collect();
+        classified.sort();
+        assert_eq!(tables, classified, "add each new table to SYNCED_TABLES or LOCAL_ONLY_TABLES (financial: local only)");
+
+        const FINANCIAL_WORDS: &[&str] =
+            &["fee", "price", "cost", "amount", "payment", "paid", "balance", "debt", "invoice", "discount", "insurance", "money"];
+        for table in SYNCED_TABLES {
+            for column in column_names(&conn, "main", table).unwrap() {
+                assert!(
+                    !FINANCIAL_WORDS.iter().any(|word| column.contains(word)),
+                    "{table}.{column} looks financial: financial data must stay in local-only tables"
+                );
+            }
+            let columns = column_names(&conn, "main", table).unwrap();
+            assert!(columns.contains(&"updated_at".to_string()) && columns.contains(&"sync_state".to_string()));
+        }
     }
 
     #[test]

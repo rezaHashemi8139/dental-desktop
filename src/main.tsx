@@ -9,6 +9,8 @@ import { router } from "./router";
 import { DirectionProvider } from "./i18n/direction-provider";
 import { initTheme } from "./theme/theme";
 import { lockDown } from "./lib/lockdown";
+import { initSync } from "./lib/sync";
+import { initUpdates } from "./lib/update";
 import "./index.css";
 
 // Before anything is drawn, so the page never flashes in the wrong colors.
@@ -27,8 +29,9 @@ requestAnimationFrame(() =>
 
 // Languages (including downloaded ones) and the current login must be known
 // before the first render: the router's guards decide the first page from them.
-// Connectivity is followed from the start, so no change is missed.
-Promise.all([initI18n(), loadSession(), initConnectivity()]).then(() => {
+// Connectivity, updates and syncing are followed from the start, so no change is
+// missed and a forced update shows at once.
+Promise.all([initI18n(), loadSession(), initConnectivity(), initUpdates(), initSync()]).then(() => {
   ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     <React.StrictMode>
       <DirectionProvider>

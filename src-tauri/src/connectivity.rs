@@ -81,6 +81,9 @@ impl ConnectivityStatus {
 
 struct Shared {
     status: ConnectivityStatus,
+    /// The minimum app version the server's last answered health check asked for
+    /// ("" = none); None until the server has answered once (update.rs).
+    minimum_app_version: Option<String>,
     /// Raised by every finished check, so a waiting caller can tell a fresh result.
     generation: u64,
     /// Set to ask the watcher thread for a check now (network change).
@@ -105,6 +108,7 @@ impl Watcher {
             api,
             shared: Mutex::new(Shared {
                 status: ConnectivityStatus { state: ConnectivityState::Checking, network: NetworkLevel::Unknown, checked_at: 0 },
+                minimum_app_version: None,
                 generation: 0,
                 wake: false,
             }),
@@ -130,9 +134,12 @@ impl Watcher {
                 return shared.status;
             }
         }
-        let status = probe(&self.api).await;
+        let (status, minimum_app_version) = probe(&self.api).await;
         let changed = {
             let mut shared = self.shared.lock().unwrap();
+            if minimum_app_version.is_some() {
+                shared.minimum_app_version = minimum_app_version;
+            }
             let changed = shared.status.state != status.state;
             if changed {
                 eprintln!("Connectivity: {:?} -> {:?} (network {:?})", shared.status.state, status.state, status.network);
@@ -145,6 +152,12 @@ impl Watcher {
             listener(status, changed);
         }
         status
+    }
+
+    /// The minimum app version from the server's latest health check answer ("" =
+    /// none), or None if the server has not answered yet.
+    pub fn minimum_app_version(&self) -> Option<String> {
+        self.shared.lock().unwrap().minimum_app_version.clone()
     }
 
     /// Asks the watcher thread to check soon (after the debounce delay).
@@ -198,10 +211,13 @@ impl Watcher {
     }
 }
 
-/// One check: the network hint, then the server's health check.
-async fn probe(api: &Api) -> ConnectivityStatus {
+/// One check: the network hint, then the server's health check. Also returns the
+/// minimum app version the server asks for, if it answered.
+async fn probe(api: &Api) -> (ConnectivityStatus, Option<String>) {
     let network = network_level();
-    let state = match api.health().await {
+    let health = api.health().await;
+    let minimum_app_version = health.as_ref().ok().map(|h| h.minimum_app_version.clone());
+    let state = match health {
         Ok(health) if health.database_ok => ConnectivityState::Online,
         Ok(_) => ConnectivityState::ServerUnavailable,
         // The server is the only real proof of being online. Without it, the
@@ -211,7 +227,7 @@ async fn probe(api: &Api) -> ConnectivityStatus {
         }
         Err(_) => ConnectivityState::ServerUnavailable,
     };
-    ConnectivityStatus { state, network, checked_at: clock::now_unix() }
+    (ConnectivityStatus { state, network, checked_at: clock::now_unix() }, minimum_app_version)
 }
 
 #[cfg(windows)]
