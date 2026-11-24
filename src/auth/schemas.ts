@@ -47,6 +47,15 @@ export const registerSchema = z
   .refine(passwordsMatch, passwordMismatch);
 export type RegisterValues = z.infer<typeof registerSchema>;
 
+/** A new password in place of a temporary one: the sign-up rules. */
+export const changePasswordSchema = z
+  .object({
+    password: newPassword,
+    confirmPassword: z.string(),
+  })
+  .refine(passwordsMatch, passwordMismatch);
+export type ChangePasswordValues = z.infer<typeof changePasswordSchema>;
+
 // --- First-start setup (src/pages/setup-form.tsx) ---------------------------
 
 /** Fields of the setup form whatever kind of owner is chosen. */

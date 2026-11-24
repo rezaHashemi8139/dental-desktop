@@ -5,12 +5,14 @@ import { useTranslation } from "react-i18next";
 import { useConnectivity } from "@/auth/connectivity";
 import { connectionStatus, type ConnectionMode, type Session } from "@/auth/session";
 import { getEndedMessage, getEndedNotice, setSession } from "@/auth/store";
+import type { RustMessage } from "@/i18n/message";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { PageArea } from "@/pages/root-layout";
+import { ChangePasswordForm } from "./change-password-form";
 import { LoginForm } from "./login-form";
 import { RegisterForm } from "./register-form";
 import { SetupForm } from "./setup-form";
@@ -208,10 +210,43 @@ export function LoginPage() {
   const [ended] = useState(getEndedMessage);
   // Why the app itself logged out last, if it did (database cleared).
   const [endedNotice] = useState(getEndedNotice);
+  // A login refused for a temporary password: its credentials, while a new one is chosen.
+  const [temporary, setTemporary] = useState<{ username: string; password: string } | null>(null);
+  // Back from choosing a new password: the login form starts again with this.
+  const [afterChange, setAfterChange] = useState<{ username: string; changed: boolean; error?: RustMessage } | null>(
+    null,
+  );
 
   function onLoggedIn(session: Session) {
     setSession(session);
     navigate({ to: "/home", replace: true });
+  }
+
+  if (temporary) {
+    return (
+      <ChangePasswordForm
+        username={temporary.username}
+        currentPassword={temporary.password}
+        onLoggedIn={onLoggedIn}
+        onBack={(changed, error) => {
+          setAfterChange({ username: temporary.username, changed, error });
+          setTemporary(null);
+        }}
+      />
+    );
+  }
+
+  if (afterChange) {
+    return (
+      <LoginForm
+        key="after-change"
+        initialUsername={afterChange.username}
+        notice={afterChange.changed ? t("auth.changePassword.changed") : null}
+        initialError={afterChange.error ?? null}
+        onLoggedIn={onLoggedIn}
+        onPasswordChangeRequired={(username, password) => setTemporary({ username, password })}
+      />
+    );
   }
 
   return (
@@ -222,6 +257,7 @@ export function LoginPage() {
       notice={registered ? t(setup ? "setup.success" : "auth.signUpSuccess") : endedNotice && t(endedNotice)}
       initialError={ended}
       onLoggedIn={onLoggedIn}
+      onPasswordChangeRequired={(username, password) => setTemporary({ username, password })}
     />
   );
 }

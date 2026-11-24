@@ -248,6 +248,22 @@ async fn setup_clinic(
     setup::setup(&state.ctx, &clinic, &owner).await
 }
 
+/// Replaces a temporary password (or any password, proven with the current one).
+/// The frontend then logs in with the new one.
+#[tauri::command]
+async fn change_password(
+    state: State<'_, AuthState>,
+    username: String,
+    current_password: String,
+    new_password: String,
+) -> Result<(), Message> {
+    let (current_password, new_password) = (Zeroizing::new(current_password), Zeroizing::new(new_password));
+    if state.updates.is_required() {
+        return Err(Message::new(update::REQUIRED_ERROR));
+    }
+    auth::change_password(&state.ctx, &username, &current_password, &new_password).await
+}
+
 #[tauri::command]
 async fn sign_up(state: State<'_, AuthState>, account: auth::SignUpInput) -> Result<Message, Message> {
     auth::sign_up(&state.ctx, &account).await?;
@@ -575,6 +591,7 @@ pub fn run() {
             connection_status,
             setup_clinic,
             sign_up,
+            change_password,
             login,
             logout,
             export_database,

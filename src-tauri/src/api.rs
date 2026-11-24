@@ -134,6 +134,14 @@ impl Api {
         self.call("AuthService", "Login", request, None).await
     }
 
+    /// No session needed: proven with the current password. Ends the account's sessions.
+    pub async fn change_password(
+        &self,
+        request: &proto::ChangePasswordRequest,
+    ) -> Result<proto::ChangePasswordResponse, ApiError> {
+        self.call("AuthService", "ChangePassword", request, None).await
+    }
+
     pub async fn confirm_key_rotation(
         &self,
         token: &str,

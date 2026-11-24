@@ -3,7 +3,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { LoaderCircleIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { login, type Session } from "@/auth/session";
+import { login, PASSWORD_CHANGE_REQUIRED, type Session } from "@/auth/session";
 import { loginSchema, type LoginValues } from "@/auth/schemas";
 import { toRustMessage, translateMessage, type RustMessage } from "@/i18n/message";
 import { fieldError } from "@/lib/form";
@@ -17,9 +17,17 @@ interface LoginFormProps {
   /** Shown until the next attempt, e.g. why the server ended the last session. */
   initialError?: RustMessage | null;
   onLoggedIn: (session: Session) => void;
+  /** The account still has a temporary password: a new one must be chosen first. */
+  onPasswordChangeRequired: (username: string, password: string) => void;
 }
 
-export function LoginForm({ initialUsername = "", notice, initialError = null, onLoggedIn }: LoginFormProps) {
+export function LoginForm({
+  initialUsername = "",
+  notice,
+  initialError = null,
+  onLoggedIn,
+  onPasswordChangeRequired,
+}: LoginFormProps) {
   const { t } = useTranslation();
   const [error, setError] = useState<RustMessage | null>(initialError);
   const {
@@ -38,7 +46,12 @@ export function LoginForm({ initialUsername = "", notice, initialError = null, o
     try {
       onLoggedIn(await login(values.username, values.password));
     } catch (e) {
-      setError(toRustMessage(e));
+      const message = toRustMessage(e);
+      if (message.key === PASSWORD_CHANGE_REQUIRED) {
+        onPasswordChangeRequired(values.username, values.password);
+        return;
+      }
+      setError(message);
       resetField("password");
       setFocus("password");
     }

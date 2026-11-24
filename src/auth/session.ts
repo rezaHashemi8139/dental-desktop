@@ -58,6 +58,18 @@ export function signUp(account: SignUpInput): Promise<void> {
   return invoke("sign_up", { account });
 }
 
+/**
+ * Replaces a password, proven with the current one: e.g. the temporary password a
+ * clinic admin gave, which the server refuses to log in with until it is changed.
+ * Needs the server. Does not log in.
+ */
+export function changePassword(username: string, currentPassword: string, newPassword: string): Promise<void> {
+  return invoke("change_password", { username, currentPassword, newPassword });
+}
+
+/** The error of a login refused because the account still has a temporary password. */
+export const PASSWORD_CHANGE_REQUIRED = "auth.errors.passwordChangeRequired";
+
 export function logout(): Promise<void> {
   return invoke("logout");
 }

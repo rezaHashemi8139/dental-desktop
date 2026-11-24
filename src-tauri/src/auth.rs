@@ -181,6 +181,12 @@ fn internal(details: impl std::fmt::Display) -> Message {
     Message::error("errors.unknown", details)
 }
 
+/// The server's reason for refusing a login with a temporary password.
+const PASSWORD_CHANGE_REQUIRED: &str = "password_change_required";
+/// Its translation key; the login screen recognizes it and asks for a new password
+/// (src/pages/change-password-form.tsx).
+const PASSWORD_CHANGE_REQUIRED_ERROR: &str = "auth.errors.passwordChangeRequired";
+
 /// Maps a server error reason (dental-server/internal/service/common.go) to a translation key.
 pub(crate) fn server_error(code: &str, reason: &str) -> Message {
     match reason {
@@ -197,7 +203,8 @@ pub(crate) fn server_error(code: &str, reason: &str) -> Message {
         "invalid_national_id" => err("person.errors.invalidNationalId"),
         "identity_mismatch" => err("person.errors.identityMismatch"),
         "no_clinic" => err("auth.errors.noClinic"),
-        "password_change_required" => err("auth.errors.passwordChangeRequired"),
+        PASSWORD_CHANGE_REQUIRED => err(PASSWORD_CHANGE_REQUIRED_ERROR),
+        "password_unchanged" => err("auth.errors.passwordUnchanged"),
         "subscription_inactive" => err("auth.errors.subscriptionInactive"),
         "clinic_limit_exceeded" => err("auth.errors.clinicLimitExceeded"),
         "device_limit_exceeded" => err("auth.errors.deviceLimitExceeded"),
@@ -306,6 +313,25 @@ fn local_login_status(ctx: &Context) -> LocalLogin {
     match localdb::check_file(&ctx.database_path()) {
         Ok(()) => LocalLogin::Ready,
         Err(e) => LocalLogin::Broken(format!("database: {e}")),
+    }
+}
+
+/// Replaces a password, proven with the current one. For accounts a clinic admin
+/// created with a temporary password: their first login is refused with
+/// "password_change_required" until they choose their own. Needs the server.
+///
+/// The vault is not touched: the next online login writes the user's entry with
+/// the new password (an account with a temporary password has none yet).
+pub async fn change_password(ctx: &Context, username: &str, current_password: &str, new_password: &str) -> Result<(), Message> {
+    let request = proto::ChangePasswordRequest {
+        username: username.trim().to_owned(),
+        current_password: current_password.to_owned(),
+        new_password: new_password.to_owned(),
+    };
+    match ctx.api.change_password(&request).await {
+        Ok(_) => Ok(()),
+        Err(ApiError::Network(_)) => Err(err("auth.errors.serverUnreachable")),
+        Err(ApiError::Server { code, reason }) => Err(server_error(&code, &reason)),
     }
 }
 
