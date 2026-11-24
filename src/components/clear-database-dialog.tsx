@@ -7,6 +7,7 @@ import { clearDatabaseSchema, type ClearDatabaseValues } from "@/auth/schemas";
 import { toRustMessage, translateMessage, type RustMessage } from "@/i18n/message";
 import { clearDatabase } from "@/lib/backup";
 import { fieldError } from "@/lib/form";
+import { AccountPasswordField } from "@/components/account-password-field";
 import { FormField } from "@/components/form-field";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -22,7 +23,7 @@ import {
 
 /**
  * Deletes all clinic data on this computer (managers only). The user confirms by
- * typing their own username; the manager who clears keeps access.
+ * typing their own username and account password; the manager who clears keeps access.
  * Opened from the Database page (src/pages/database-page.tsx).
  */
 export function ClearDatabaseDialog({
@@ -75,19 +76,21 @@ function ClearForm({ username, onCleared }: { username: string; onCleared: () =>
   const {
     register,
     handleSubmit,
+    resetField,
     formState: { errors, isSubmitting },
   } = useForm<ClearDatabaseValues>({
     resolver: zodResolver(clearDatabaseSchema(username)),
-    defaultValues: { confirmation: "" },
+    defaultValues: { confirmation: "", accountPassword: "" },
   });
 
-  async function submit() {
+  async function submit(values: ClearDatabaseValues) {
     setError(null);
     try {
-      await clearDatabase();
+      await clearDatabase(values.accountPassword);
       onCleared();
     } catch (e) {
       setError(toRustMessage(e));
+      resetField("accountPassword");
     }
   }
 
@@ -112,6 +115,11 @@ function ClearForm({ username, onCleared }: { username: string; onCleared: () =>
         autoFocus
         latin
         {...register("confirmation")}
+      />
+      <AccountPasswordField
+        id="clear-account-password"
+        error={fieldError(errors.accountPassword)}
+        {...register("accountPassword")}
       />
 
       {error && (

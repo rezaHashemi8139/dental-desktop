@@ -8,6 +8,7 @@ import { exportDatabaseSchema, type ExportDatabaseValues } from "@/auth/schemas"
 import { toRustMessage, translateMessage, type RustMessage } from "@/i18n/message";
 import { BACKUP_EXTENSION, defaultBackupFileName, exportDatabase, fileName } from "@/lib/backup";
 import { fieldError } from "@/lib/form";
+import { AccountPasswordField } from "@/components/account-password-field";
 import { FormField } from "@/components/form-field";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -31,7 +32,7 @@ interface ExportResult {
  * Saves an encrypted backup of the clinic database (managers only). The user
  * picks a password; once the file is saved the app shows the recovery key, once.
  * Neither is stored, so the dialog can only be closed after the user confirms
- * they have kept both. Opened from the Database page (src/pages/database-page.tsx).
+ * they have kept both. The user's own account password is asked for too. Opened from the Database page (src/pages/database-page.tsx).
  */
 export function ExportDatabaseDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const [result, setResult] = useState<ExportResult | null>(null);
@@ -67,10 +68,11 @@ function ExportForm({ onExported }: { onExported: (result: ExportResult) => void
   const {
     register,
     handleSubmit,
+    resetField,
     formState: { errors, isSubmitting },
   } = useForm<ExportDatabaseValues>({
     resolver: zodResolver(exportDatabaseSchema),
-    defaultValues: { password: "", confirmPassword: "" },
+    defaultValues: { password: "", confirmPassword: "", accountPassword: "" },
   });
 
   async function submit(values: ExportDatabaseValues) {
@@ -82,9 +84,10 @@ function ExportForm({ onExported }: { onExported: (result: ExportResult) => void
         filters: [{ name: t("backup.fileType"), extensions: [BACKUP_EXTENSION] }],
       });
       if (!path) return; // Cancelled.
-      onExported({ recoveryKey: await exportDatabase(path, values.password), file: fileName(path) });
+      onExported({ recoveryKey: await exportDatabase(values.accountPassword, path, values.password), file: fileName(path) });
     } catch (e) {
       setError(toRustMessage(e));
+      resetField("accountPassword");
     }
   }
 
@@ -120,6 +123,11 @@ function ExportForm({ onExported }: { onExported: (result: ExportResult) => void
         autoComplete="new-password"
         latin
         {...register("confirmPassword")}
+      />
+      <AccountPasswordField
+        id="export-account-password"
+        error={fieldError(errors.accountPassword)}
+        {...register("accountPassword")}
       />
 
       {error && (

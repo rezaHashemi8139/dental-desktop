@@ -199,12 +199,39 @@ fn write_backup(target: &Path, header: &[u8], copy: &Path) -> io::Result<()> {
         io::copy(&mut File::open(copy)?, &mut out)?;
         out.sync_all()?;
         drop(out);
-        fs::rename(&partial, target)
+        rename_when_free(&partial, target)
     })();
     if result.is_err() {
         let _ = fs::remove_file(&partial);
     }
     result
+}
+
+/// Tries to rename a file that was just written this many times before giving up.
+const RENAME_ATTEMPTS: u32 = 10;
+
+/// Renames `from` to `to`. On Windows another program (usually the antivirus,
+/// scanning the new file) may still hold `from` for a moment after it was
+/// closed; the rename is then retried a few times, waiting a little longer each time.
+fn rename_when_free(from: &Path, to: &Path) -> io::Result<()> {
+    let mut attempt = 1;
+    loop {
+        match fs::rename(from, to) {
+            Err(e) if attempt < RENAME_ATTEMPTS && is_in_use(&e) => {
+                std::thread::sleep(std::time::Duration::from_millis(50 * u64::from(attempt)));
+                attempt += 1;
+            }
+            result => return result,
+        }
+    }
+}
+
+/// Whether the file is open in another process: ERROR_SHARING_VIOLATION, or
+/// access denied (what Windows reports while a file is about to be released).
+fn is_in_use(error: &io::Error) -> bool {
+    const ERROR_SHARING_VIOLATION: i32 = 32;
+    cfg!(windows)
+        && (error.raw_os_error() == Some(ERROR_SHARING_VIOLATION) || error.kind() == io::ErrorKind::PermissionDenied)
 }
 
 /// What a restore does with the data already on this computer.

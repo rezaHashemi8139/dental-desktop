@@ -7,7 +7,8 @@ import { currentSession, type Session } from "./session";
  * The logged-in user. Route guards read it in `beforeLoad` (src/router.tsx);
  * pages read it with `useSession()`, which follows changes Rust makes by itself:
  * - an offline session that reconnected becomes online (event "session");
- * - a session the server ended (access revoked) becomes null (event "session-ended"),
+ * - a session that ended by itself (the server revoked access, or too many wrong
+ *   passwords for a database action) becomes null (event "session-ended"),
  *   and the app layout (src/pages/app-layout.tsx) then goes to the login screen.
  * Logging in and out change it together with a navigation (log in → /home, log out → /login).
  */

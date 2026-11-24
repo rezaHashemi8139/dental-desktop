@@ -26,7 +26,8 @@ use zeroize::Zeroizing;
 /// Sent to the frontend when the session changes by itself (an offline session
 /// reconnected); the payload is the new SessionInfo.
 const SESSION_EVENT: &str = "session";
-/// Sent when the session was ended by the server (access revoked); the payload is
+/// Sent when the session ended by itself: the server revoked access, or too many
+/// wrong passwords were given for a database action. The payload is
 /// the Message to show on the login screen.
 const SESSION_ENDED_EVENT: &str = "session-ended";
 
@@ -124,48 +125,98 @@ async fn logout(state: State<'_, AuthState>) -> Result<(), Message> {
     Ok(())
 }
 
-/// Saves an encrypted copy of the clinic database to `path` (chosen by the user
-/// in a Save dialog). Managers only. Returns the recovery key: shown once, never stored.
-#[tauri::command]
-async fn export_database(state: State<'_, AuthState>, path: PathBuf, password: String) -> Result<String, Message> {
+/// Runs a database action (export, restore, clear) under Rust's own checks,
+/// whatever the UI shows: only for the logged-in manager, and only with their own
+/// account password, checked first. After `MAX_WRONG_PASSWORDS` wrong ones in a
+/// row the session is logged out, and the frontend told as for a revoked session.
+async fn run_database_action<T>(
+    app: &AppHandle,
+    state: &AuthState,
+    account_password: &str,
+    action: impl FnOnce(&Session) -> Result<T, Message>,
+) -> Result<T, Message> {
     // Never during a login or a reconnect, which may rekey the database.
     let Ok(_busy) = state.busy.try_lock() else {
         return Err(Message::new("auth.errors.busy"));
     };
-    let password = Zeroizing::new(password);
-    let guard = state.session.lock().unwrap();
-    let session = backup::manager_session(guard.as_ref())?;
-    backup::export(&session.db, &state.ctx.data_dir, &path, &password)
+    let user = {
+        let guard = state.session.lock().unwrap();
+        backup::manager_session(guard.as_ref())?.info.clone()
+    };
+    // Slow (Argon2id): the session stays free meanwhile.
+    let checked = auth::verify_password(&state.ctx, &user, account_password);
+
+    let ended = {
+        let mut guard = state.session.lock().unwrap();
+        // Still the same manager: no logout or other login in the meantime.
+        if backup::manager_session(guard.as_ref())?.info.user_id != user.user_id {
+            return Err(Message::new("database.errors.notAllowed"));
+        }
+        let session = guard.as_mut().expect("checked above");
+        match checked {
+            Ok(()) => {
+                session.right_password();
+                return action(session);
+            }
+            Err(e) if e.key != auth::WRONG_PASSWORD => return Err(e),
+            Err(e) => match session.wrong_password() {
+                0 => guard.take(),
+                left => return Err(e.with("left", left)),
+            },
+        }
+    };
+
+    let message = Message::new("identity.errors.tooManyAttempts").with("max", auth::MAX_WRONG_PASSWORDS);
+    if let Some(session) = ended {
+        eprintln!("Logged out: {} wrong passwords in a row for a database action", auth::MAX_WRONG_PASSWORDS);
+        auth::logout(&state.ctx, session).await;
+        let _ = app.emit(SESSION_ENDED_EVENT, message.clone());
+    }
+    Err(message)
+}
+
+/// Saves an encrypted copy of the clinic database to `path` (chosen by the user
+/// in a Save dialog). Returns the recovery key: shown once, never stored.
+#[tauri::command]
+async fn export_database(
+    app: AppHandle,
+    state: State<'_, AuthState>,
+    account_password: String,
+    path: PathBuf,
+    password: String,
+) -> Result<String, Message> {
+    let (account_password, password) = (Zeroizing::new(account_password), Zeroizing::new(password));
+    run_database_action(&app, &state, &account_password, |session| {
+        backup::export(&session.db, &state.ctx.data_dir, &path, &password)
+    })
+    .await
 }
 
 /// Restores the backup at `path` into the clinic database, replacing its contents
-/// or merging into them (`mode`). Managers only.
+/// or merging into them (`mode`).
 #[tauri::command]
 async fn restore_database(
+    app: AppHandle,
     state: State<'_, AuthState>,
+    account_password: String,
     path: PathBuf,
     password: String,
     recovery_key: String,
     mode: backup::RestoreMode,
 ) -> Result<(), Message> {
-    let Ok(_busy) = state.busy.try_lock() else {
-        return Err(Message::new("auth.errors.busy"));
-    };
+    let account_password = Zeroizing::new(account_password);
     let (password, recovery_key) = (Zeroizing::new(password), Zeroizing::new(recovery_key));
-    let guard = state.session.lock().unwrap();
-    let session = backup::manager_session(guard.as_ref())?;
-    backup::restore(&session.db, &session.info, &state.ctx.data_dir, &path, &password, &recovery_key, mode)
+    run_database_action(&app, &state, &account_password, |session| {
+        backup::restore(&session.db, &session.info, &state.ctx.data_dir, &path, &password, &recovery_key, mode)
+    })
+    .await
 }
 
-/// Deletes all clinic data on this computer; the manager who does it keeps access. Managers only.
+/// Deletes all clinic data on this computer; the manager who does it keeps access.
 #[tauri::command]
-async fn clear_database(state: State<'_, AuthState>) -> Result<(), Message> {
-    let Ok(_busy) = state.busy.try_lock() else {
-        return Err(Message::new("auth.errors.busy"));
-    };
-    let guard = state.session.lock().unwrap();
-    let session = backup::manager_session(guard.as_ref())?;
-    backup::clear(&session.db, &session.info)
+async fn clear_database(app: AppHandle, state: State<'_, AuthState>, account_password: String) -> Result<(), Message> {
+    let account_password = Zeroizing::new(account_password);
+    run_database_action(&app, &state, &account_password, |session| backup::clear(&session.db, &session.info)).await
 }
 
 /// Runs after every connectivity check: tells the frontend about changes and,

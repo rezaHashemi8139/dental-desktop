@@ -8,6 +8,7 @@ import { restoreDatabaseSchema, type RestoreDatabaseValues } from "@/auth/schema
 import { toRustMessage, translateMessage, type RustMessage } from "@/i18n/message";
 import { BACKUP_EXTENSION, fileName, restoreDatabase, type RestoreMode } from "@/lib/backup";
 import { fieldError } from "@/lib/form";
+import { AccountPasswordField } from "@/components/account-password-field";
 import { FormField } from "@/components/form-field";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -25,7 +26,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 /**
  * Restores a backup into the clinic data on this computer (managers only),
  * merging into it or replacing it. Needs the backup's password and recovery key,
- * which only the user has.
+ * which only the user has, and the user's own account password.
  * Opened from the Database page (src/pages/database-page.tsx).
  */
 export function RestoreDatabaseDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
@@ -80,7 +81,7 @@ function RestoreForm({ onRestored }: { onRestored: (mode: RestoreMode) => void }
   } = useForm<RestoreDatabaseValues>({
     resolver: zodResolver(restoreDatabaseSchema),
     // Merging deletes nothing, so it is the safer choice to start from.
-    defaultValues: { mode: "merge", path: "", recoveryKey: "", password: "" },
+    defaultValues: { mode: "merge", path: "", recoveryKey: "", password: "", accountPassword: "" },
   });
   const path = watch("path");
   const mode = watch("mode");
@@ -106,11 +107,12 @@ function RestoreForm({ onRestored }: { onRestored: (mode: RestoreMode) => void }
   async function submit(values: RestoreDatabaseValues) {
     setError(null);
     try {
-      await restoreDatabase(values.path, values.password, values.recoveryKey, values.mode);
+      await restoreDatabase(values.accountPassword, values.path, values.password, values.recoveryKey, values.mode);
       onRestored(values.mode);
     } catch (e) {
       setError(toRustMessage(e));
       resetField("password");
+      resetField("accountPassword");
     }
   }
 
@@ -178,6 +180,11 @@ function RestoreForm({ onRestored }: { onRestored: (mode: RestoreMode) => void }
         autoComplete="off"
         latin
         {...register("password")}
+      />
+      <AccountPasswordField
+        id="restore-account-password"
+        error={fieldError(errors.accountPassword)}
+        {...register("accountPassword")}
       />
 
       {error && (

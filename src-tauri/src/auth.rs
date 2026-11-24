@@ -84,7 +84,13 @@ pub struct Session {
     /// session can log in online by itself once the server is back. Cleared once
     /// online, and when reconnecting is given up.
     reconnect_password: Option<Zeroizing<String>>,
+    /// Wrong account passwords in a row, given for sensitive actions (`verify_password`).
+    wrong_passwords: u32,
 }
+
+/// After this many wrong account passwords in a row for sensitive actions, the
+/// session is logged out.
+pub const MAX_WRONG_PASSWORDS: u32 = 3;
 
 impl Session {
     pub fn token(&self) -> Option<&str> {
@@ -109,6 +115,35 @@ impl Session {
     pub fn stop_reconnecting(&mut self) {
         self.reconnect_password = None;
     }
+
+    /// Counts a wrong account password given for a sensitive action. Returns how
+    /// many tries are left; at 0 the caller logs out.
+    pub fn wrong_password(&mut self) -> u32 {
+        self.wrong_passwords += 1;
+        MAX_WRONG_PASSWORDS.saturating_sub(self.wrong_passwords)
+    }
+
+    /// A right account password: the count of wrong ones starts again.
+    pub fn right_password(&mut self) {
+        self.wrong_passwords = 0;
+    }
+}
+
+/// The error of `verify_password` for a wrong password.
+pub const WRONG_PASSWORD: &str = "identity.errors.wrongPassword";
+
+/// Checks that `password` is the logged-in user's own, against their vault entry
+/// (written by every online login, so it works online and offline). Slow on
+/// purpose (Argon2id): call it without holding the session lock.
+pub fn verify_password(ctx: &Context, user: &SessionInfo, password: &str) -> Result<(), Message> {
+    let installation =
+        Installation::load(&ctx.data_dir).map_err(internal)?.ok_or_else(|| err("identity.errors.unavailable"))?;
+    let vault = Vault::load(&ctx.data_dir, &installation.id).map_err(internal)?;
+    let entry = vault
+        .find(&user.username)
+        .filter(|entry| entry.user_id == user.user_id)
+        .ok_or_else(|| err("identity.errors.unavailable"))?;
+    vault.unlock(entry, password).map(|_| ()).map_err(|_| err(WRONG_PASSWORD))
 }
 
 /// An offline session's credentials, to log in online once the server is back.
@@ -417,6 +452,7 @@ async fn login_online(
         key_version: login.new_version(),
         token: Some(login.token),
         reconnect_password: None,
+        wrong_passwords: 0,
     })
 }
 
@@ -559,6 +595,7 @@ fn login_offline(ctx: &Context, installation: &Installation, username: &str, pas
         key_version: database_key.version,
         token: None,
         reconnect_password: Some(Zeroizing::new(password.to_owned())),
+        wrong_passwords: 0,
     })
 }
 
@@ -726,6 +763,9 @@ mod e2e {
         assert_eq!(session.info.role, localdb::ROLE_MANAGER);
         assert!(session.info.offline_until > clock::now_unix() + 6 * 24 * 3600);
         assert!(session.reconnect_request().is_none(), "online sessions keep no password");
+        // "Is it really you?" works right after an online login, against the vault.
+        assert_eq!(verify_password(&online, &session.info, "wrong-password").unwrap_err().key, WRONG_PASSWORD);
+        verify_password(&online, &session.info, "Doctor-passw0rd").unwrap();
         logout(&online, session).await;
 
         // Second login rotates the key; the database still opens.
@@ -778,5 +818,33 @@ mod e2e {
         assert_eq!(mode(&offline).await, ConnectionMode::LocalDatabaseUnavailable);
         let error = login(&offline, &doctor, "Doctor-passw0rd", false).await.err().unwrap();
         assert_eq!(error.key, "auth.errors.databaseUnavailable");
+    }
+
+    #[test]
+    fn logs_out_after_wrong_passwords_in_a_row() {
+        let mut session = Session {
+            info: SessionInfo {
+                user_id: hex::encode([1u8; 16]),
+                username: "doctor".into(),
+                full_name: "Dr. A".into(),
+                role: localdb::ROLE_MANAGER.into(),
+                is_admin: true,
+                online: true,
+                offline_until: 0,
+            },
+            db: Connection::open_in_memory().unwrap(),
+            key_version: 1,
+            token: None,
+            reconnect_password: None,
+            wrong_passwords: 0,
+        };
+        assert_eq!(MAX_WRONG_PASSWORDS, 3);
+        assert_eq!(session.wrong_password(), 2);
+        assert_eq!(session.wrong_password(), 1);
+        // A right password starts the count again.
+        session.right_password();
+        assert_eq!(session.wrong_password(), 2);
+        assert_eq!(session.wrong_password(), 1);
+        assert_eq!(session.wrong_password(), 0, "third wrong one in a row: log out");
     }
 }

@@ -5,7 +5,14 @@ import { invoke } from "@tauri-apps/api/core";
  * Managers only. A backup is locked with a password the user chooses and a
  * recovery key the app makes; neither is stored anywhere, so both are needed to
  * restore it. Each call throws a RustMessage (src/i18n/message.ts) on failure.
+ *
+ * Every action also takes the manager's own account password (`accountPassword`),
+ * which Rust checks before anything else, together with the role. After
+ * MAX_WRONG_PASSWORDS wrong ones in a row Rust logs out (event "session-ended").
  */
+
+/** Same as MAX_WRONG_PASSWORDS in src-tauri/src/auth.rs. */
+export const MAX_WRONG_PASSWORDS = 3;
 
 /** File extension of backup files, without the dot. */
 export const BACKUP_EXTENSION = "dbk";
@@ -17,8 +24,8 @@ export function defaultBackupFileName(date = new Date()): string {
 }
 
 /** Saves a backup to `path` (from a Save dialog). Returns the recovery key, shown to the user once. */
-export function exportDatabase(path: string, password: string): Promise<string> {
-  return invoke<string>("export_database", { path, password });
+export function exportDatabase(accountPassword: string, path: string, password: string): Promise<string> {
+  return invoke<string>("export_database", { accountPassword, path, password });
 }
 
 /**
@@ -28,13 +35,19 @@ export function exportDatabase(path: string, password: string): Promise<string> 
 export type RestoreMode = "replace" | "merge";
 
 /** Restores the backup at `path` into the clinic data on this computer (see RestoreMode). */
-export function restoreDatabase(path: string, password: string, recoveryKey: string, mode: RestoreMode): Promise<void> {
-  return invoke("restore_database", { path, password, recoveryKey, mode });
+export function restoreDatabase(
+  accountPassword: string,
+  path: string,
+  password: string,
+  recoveryKey: string,
+  mode: RestoreMode,
+): Promise<void> {
+  return invoke("restore_database", { accountPassword, path, password, recoveryKey, mode });
 }
 
 /** Deletes all clinic data on this computer; the manager who does it keeps access. */
-export function clearDatabase(): Promise<void> {
-  return invoke("clear_database");
+export function clearDatabase(accountPassword: string): Promise<void> {
+  return invoke("clear_database", { accountPassword });
 }
 
 /**

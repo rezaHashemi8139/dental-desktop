@@ -204,7 +204,7 @@ export function LoginPage() {
   const { t } = useTranslation();
   const { registered, setup } = loginRoute.useSearch();
   const navigate = useNavigate();
-  // Why the server ended the last session, if it did (src/auth/store.ts).
+  // Why the last session ended by itself, if it did (src/auth/store.ts).
   const [ended] = useState(getEndedMessage);
 
   function onLoggedIn(session: Session) {

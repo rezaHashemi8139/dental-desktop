@@ -86,11 +86,15 @@ export type SetupValues = z.infer<typeof newOwnerSetupSchema>;
 
 // --- Database page (src/components/*-database-dialog.tsx) ------------------
 
+// Every database action also asks for the user's own account password ("is it
+// really you?"); Rust checks it.
+
 /** The backup password follows the same rules as an account password. */
 export const exportDatabaseSchema = z
   .object({
     password: newPassword,
     confirmPassword: z.string(),
+    accountPassword: required,
   })
   .refine(passwordsMatch, passwordMismatch);
 export type ExportDatabaseValues = z.infer<typeof exportDatabaseSchema>;
@@ -100,13 +104,15 @@ export const restoreDatabaseSchema = z.object({
   path: z.string().min(1, message("backup.validation.fileRequired")),
   recoveryKey: z.string().trim().refine(isRecoveryKeyFormat, message("backup.validation.recoveryKeyFormat")),
   password: required,
+  accountPassword: required,
 });
 export type RestoreDatabaseValues = z.infer<typeof restoreDatabaseSchema>;
 
-/** Clearing is confirmed by typing one's own username, exactly as shown. */
+/** Clearing is also confirmed by typing one's own username, exactly as shown. */
 export function clearDatabaseSchema(username: string) {
   return z.object({
     confirmation: z.string().trim().refine((v) => v === username, message("database.validation.confirmationMismatch")),
+    accountPassword: required,
   });
 }
 export type ClearDatabaseValues = z.infer<ReturnType<typeof clearDatabaseSchema>>;
