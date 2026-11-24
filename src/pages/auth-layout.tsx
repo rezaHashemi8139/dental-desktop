@@ -4,7 +4,7 @@ import { CloudOffIcon, DatabaseIcon, InfoIcon, LoaderCircleIcon, RefreshCwIcon }
 import { useTranslation } from "react-i18next";
 import { useConnectivity } from "@/auth/connectivity";
 import { connectionStatus, type ConnectionMode, type Session } from "@/auth/session";
-import { getEndedMessage, setSession } from "@/auth/store";
+import { getEndedMessage, getEndedNotice, setSession } from "@/auth/store";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -206,6 +206,8 @@ export function LoginPage() {
   const navigate = useNavigate();
   // Why the last session ended by itself, if it did (src/auth/store.ts).
   const [ended] = useState(getEndedMessage);
+  // Why the app itself logged out last, if it did (database cleared).
+  const [endedNotice] = useState(getEndedNotice);
 
   function onLoggedIn(session: Session) {
     setSession(session);
@@ -217,7 +219,7 @@ export function LoginPage() {
       // A new form (with the new username) after each sign-up or setup.
       key={registered ?? ""}
       initialUsername={registered ?? ""}
-      notice={registered ? t(setup ? "setup.success" : "auth.signUpSuccess") : null}
+      notice={registered ? t(setup ? "setup.success" : "auth.signUpSuccess") : endedNotice && t(endedNotice)}
       initialError={ended}
       onLoggedIn={onLoggedIn}
     />

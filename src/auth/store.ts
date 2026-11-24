@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import type { ParseKeys } from "i18next";
 import { listen } from "@tauri-apps/api/event";
 import type { RustMessage } from "@/i18n/message";
 import { currentSession, type Session } from "./session";
@@ -11,10 +12,14 @@ import { currentSession, type Session } from "./session";
  *   passwords for a database action) becomes null (event "session-ended"),
  *   and the app layout (src/pages/app-layout.tsx) then goes to the login screen.
  * Logging in and out change it together with a navigation (log in → /home, log out → /login).
+ * After an action that Rust ends with a logout (clearing the database), `sessionClosed`
+ * empties it and the app layout goes to the login screen, which shows a notice.
  */
 let session: Session | null = null;
 /** Why the server ended the last session, shown on the login screen until someone logs in. */
 let endedMessage: RustMessage | null = null;
+/** Why the app itself logged out (`sessionClosed`), shown on the login screen until someone logs in. */
+let endedNotice: ParseKeys | null = null;
 const listeners = new Set<() => void>();
 
 export function getSession(): Session | null {
@@ -23,13 +28,31 @@ export function getSession(): Session | null {
 
 export function setSession(next: Session | null) {
   session = next;
-  if (next) endedMessage = null;
+  if (next) {
+    endedMessage = null;
+    endedNotice = null;
+  }
   listeners.forEach((listener) => listener());
 }
 
 /** Why the server ended the last session, if it did. */
 export function getEndedMessage(): RustMessage | null {
   return endedMessage;
+}
+
+/** Why the app itself logged out last, if it did: a translation key. */
+export function getEndedNotice(): ParseKeys | null {
+  return endedNotice;
+}
+
+/**
+ * After an action Rust ended with a logout (the session is already closed there):
+ * empties the session; the login screen then shows `notice`.
+ */
+export function sessionClosed(notice: ParseKeys) {
+  endedNotice = notice;
+  endedMessage = null;
+  setSession(null);
 }
 
 function subscribe(listener: () => void) {
@@ -50,6 +73,7 @@ export async function loadSession(): Promise<void> {
   await listen<RustMessage>("session-ended", (event) => {
     // Before notifying, so the login screen it leads to can show it.
     endedMessage = event.payload;
+    endedNotice = null;
     setSession(null);
   });
   session = await currentSession().catch(() => null);

@@ -212,11 +212,17 @@ async fn restore_database(
     .await
 }
 
-/// Deletes all clinic data on this computer; the manager who does it keeps access.
+/// Deletes all clinic data on this computer, then logs out: the manager logs in
+/// again to the emptied database, where their role was kept.
 #[tauri::command]
 async fn clear_database(app: AppHandle, state: State<'_, AuthState>, account_password: String) -> Result<(), Message> {
     let account_password = Zeroizing::new(account_password);
-    run_database_action(&app, &state, &account_password, |session| backup::clear(&session.db, &session.info)).await
+    run_database_action(&app, &state, &account_password, |session| backup::clear(&session.db, &session.info)).await?;
+    let session = state.session.lock().unwrap().take();
+    if let Some(session) = session {
+        auth::logout(&state.ctx, session).await;
+    }
+    Ok(())
 }
 
 /// Runs after every connectivity check: tells the frontend about changes and,

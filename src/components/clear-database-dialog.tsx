@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { CircleCheckIcon, LoaderCircleIcon, TriangleAlertIcon } from "lucide-react";
+import { LoaderCircleIcon, TriangleAlertIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { clearDatabaseSchema, type ClearDatabaseValues } from "@/auth/schemas";
+import { sessionClosed } from "@/auth/store";
 import { toRustMessage, translateMessage, type RustMessage } from "@/i18n/message";
 import { clearDatabase } from "@/lib/backup";
 import { fieldError } from "@/lib/form";
@@ -11,19 +12,12 @@ import { AccountPasswordField } from "@/components/account-password-field";
 import { FormField } from "@/components/form-field";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 /**
  * Deletes all clinic data on this computer (managers only). The user confirms by
- * typing their own username and account password; the manager who clears keeps access.
+ * typing their own username and account password. Rust then logs out, and the
+ * app goes to the login screen, which says why; the manager keeps their role.
  * Opened from the Database page (src/pages/database-page.tsx).
  */
 export function ClearDatabaseDialog({
@@ -35,42 +29,17 @@ export function ClearDatabaseDialog({
   onOpenChange: (open: boolean) => void;
   username: string;
 }) {
-  const { t } = useTranslation();
-  const [cleared, setCleared] = useState(false);
-
-  function changeOpen(next: boolean) {
-    onOpenChange(next);
-    if (!next) setCleared(false);
-  }
-
   return (
-    <Dialog open={open} onOpenChange={changeOpen}>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[calc(100svh-2rem)] overflow-y-auto sm:max-w-md">
-        {cleared ? (
-          <div className="flex flex-col gap-4">
-            <DialogHeader>
-              <DialogTitle>{t("database.clear.title")}</DialogTitle>
-            </DialogHeader>
-            <Alert>
-              <CircleCheckIcon />
-              <AlertDescription>{t("database.clear.success")}</AlertDescription>
-            </Alert>
-            <DialogFooter>
-              <DialogClose asChild>
-                <Button>{t("database.clear.close")}</Button>
-              </DialogClose>
-            </DialogFooter>
-          </div>
-        ) : (
-          // A new form each time the dialog opens, so the confirmation is typed again.
-          open && <ClearForm username={username} onCleared={() => setCleared(true)} />
-        )}
+        {/* A new form each time the dialog opens, so the confirmation is typed again. */}
+        {open && <ClearForm username={username} />}
       </DialogContent>
     </Dialog>
   );
 }
 
-function ClearForm({ username, onCleared }: { username: string; onCleared: () => void }) {
+function ClearForm({ username }: { username: string }) {
   const { t } = useTranslation();
   const [error, setError] = useState<RustMessage | null>(null);
   const {
@@ -87,7 +56,8 @@ function ClearForm({ username, onCleared }: { username: string; onCleared: () =>
     setError(null);
     try {
       await clearDatabase(values.accountPassword);
-      onCleared();
+      // Rust has logged out: the app layout now goes to the login screen.
+      sessionClosed("database.clear.loggedOut");
     } catch (e) {
       setError(toRustMessage(e));
       resetField("accountPassword");
