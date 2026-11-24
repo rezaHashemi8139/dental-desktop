@@ -62,6 +62,11 @@ export function getConnectivity(): ConnectivityStatus {
   return snapshot.status;
 }
 
+/** Calls `listener` after every change, outside React. Returns a function that stops it. */
+export function subscribeConnectivity(listener: () => void): () => void {
+  return subscribe(listener);
+}
+
 export function useConnectivity(): Snapshot {
   return useSyncExternalStore(subscribe, () => snapshot);
 }

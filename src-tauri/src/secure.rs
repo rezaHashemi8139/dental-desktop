@@ -145,9 +145,10 @@ const MAX_KDF_MEMORY_KIB: u32 = 1024 * 1024;
 const MAX_KDF_TIME: u32 = 20;
 const MAX_KDF_THREADS: u32 = 16;
 
-const SALT_LEN: usize = 16;
+pub const SALT_LEN: usize = 16;
 
-fn password_key(password: &str, salt: &[u8], kdf: &KdfParams) -> Result<Zeroizing<[u8; KEY_LEN]>> {
+/// The Argon2id key for `password`. Refuses settings above the MAX_KDF_* limits.
+pub fn password_key(password: &str, salt: &[u8], kdf: &KdfParams) -> Result<Zeroizing<[u8; KEY_LEN]>> {
     if kdf.memory_kib > MAX_KDF_MEMORY_KIB || kdf.time > MAX_KDF_TIME || kdf.threads > MAX_KDF_THREADS {
         return Err(CryptoError("password settings out of range"));
     }

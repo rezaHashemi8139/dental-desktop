@@ -9,7 +9,8 @@ Each `.json` file is one language and describes itself in its `_meta` section
 - **Downloadable:** put the file in the server repository, `dental-server/internal/languages/files/`
   (see the README there). The app gets the list and the file from the server's `LanguageService`;
   users download it from *Language → Manage languages...* and can remove it again,
-  except for the language they are using. On every start the app downloads, in the background, each installed
+  except for the language they are using. Whenever the server becomes reachable (at start, after being
+  offline) and then every hour while it stays reachable, the app downloads in the background each installed
   language whose `version` on the server is higher, so raise `version` whenever a file changes.
 
 Only Persian (`fa.json`) is built in; every other language (English, German, ...) is downloaded

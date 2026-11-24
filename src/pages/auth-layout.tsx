@@ -1,11 +1,11 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import { getRouteApi, Navigate, Outlet, useLocation, useNavigate, useRouter } from "@tanstack/react-router";
-import { CloudOffIcon, DatabaseIcon, LoaderCircleIcon, RefreshCwIcon } from "lucide-react";
+import { CloudOffIcon, DatabaseIcon, InfoIcon, LoaderCircleIcon, RefreshCwIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useConnectivity } from "@/auth/connectivity";
 import { connectionStatus, type ConnectionMode, type Session } from "@/auth/session";
 import { getEndedMessage, setSession } from "@/auth/store";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -84,7 +84,15 @@ export function AuthLayout() {
           <CardTitle>{t("setup.title")}</CardTitle>
           <CardDescription>{t("setup.description")}</CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="flex flex-col gap-6">
+          <Alert>
+            <InfoIcon />
+            <AlertTitle>{t("setup.firstRun.title")}</AlertTitle>
+            <AlertDescription>
+              <p>{t("setup.firstRun.subscription")}</p>
+              <p>{t("setup.firstRun.backup")}</p>
+            </AlertDescription>
+          </Alert>
           <SetupForm onDone={onSetupDone} />
         </CardContent>
       </Card>

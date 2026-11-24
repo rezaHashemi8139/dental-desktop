@@ -1,6 +1,7 @@
 import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
+import { getConnectivity, subscribeConnectivity } from "@/auth/connectivity";
 
 /**
  * Multi-language setup.
@@ -185,12 +186,47 @@ export async function installLanguage(code: string): Promise<void> {
   register(file, code, "installed");
 }
 
+/** How often installed languages are checked for updates while the server stays reachable. */
+const LANGUAGE_UPDATE_INTERVAL_MS = 60 * 60 * 1000;
+
+/** The update run in progress, so runs never overlap. */
+let updating: Promise<void> | null = null;
+
+function updateInstalledLanguages(): Promise<void> {
+  updating ??= downloadLanguageUpdates().finally(() => {
+    updating = null;
+  });
+  return updating;
+}
+
+/**
+ * Keeps installed languages up to date: checks each time the server becomes
+ * reachable (at startup, and after every offline period), then every
+ * LANGUAGE_UPDATE_INTERVAL_MS while it stays reachable.
+ */
+function watchLanguageUpdates(): void {
+  let online = false;
+  let lastRun = 0;
+  const run = () => {
+    lastRun = Date.now();
+    void updateInstalledLanguages();
+  };
+  subscribeConnectivity(() => {
+    const now = getConnectivity().state === "online";
+    if (now && !online) run();
+    online = now;
+  });
+  setInterval(() => {
+    if (online && Date.now() - lastRun >= LANGUAGE_UPDATE_INTERVAL_MS) run();
+  }, LANGUAGE_UPDATE_INTERVAL_MS);
+}
+
 /**
  * Downloads every installed language the server has a newer version of. A copy
  * downloaded before new text was added lacks those keys, so they would show in
- * the fallback language. Best effort: offline or failed updates are only logged.
+ * the fallback language. Best effort: failed updates are only logged.
  */
-async function updateInstalledLanguages(): Promise<void> {
+async function downloadLanguageUpdates(): Promise<void> {
   let catalog: CatalogEntry[];
   try {
     catalog = await fetchLanguageCatalog();
@@ -291,8 +327,9 @@ export async function initI18n(): Promise<void> {
   i18n.on("languageChanged", applyLanguage);
   await i18n.changeLanguage(initial);
 
-  // In the background: the app starts with the copies it has, updated text follows.
-  void updateInstalledLanguages();
+  // In the background: the app starts with the copies it has, updated text follows
+  // as soon as the server is reachable.
+  watchLanguageUpdates();
 }
 
 export default i18n;

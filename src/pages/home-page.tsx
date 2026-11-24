@@ -5,6 +5,8 @@ import { useTranslation } from "react-i18next";
 import { logout } from "@/auth/session";
 import { setSession, useSession } from "@/auth/store";
 import { useFormatDate } from "@/i18n/calendar";
+import { ExportDatabaseDialog } from "@/components/export-database-dialog";
+import { RestoreDatabaseDialog } from "@/components/restore-database-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -68,6 +70,17 @@ export function HomePage() {
           )}
           <span className="text-muted-foreground">{t("home.offlineUntil", { date: offlineUntil })}</span>
         </div>
+        {/* Backups are for managers only (checked again in src-tauri/src/backup.rs). */}
+        {session.role === "manager" && (
+          <section className="flex flex-col gap-2 border-t pt-3">
+            <h3 className="font-medium">{t("backup.title")}</h3>
+            <p className="text-xs text-muted-foreground">{t("backup.description")}</p>
+            <div className="flex flex-wrap gap-2">
+              <ExportDatabaseDialog />
+              <RestoreDatabaseDialog />
+            </div>
+          </section>
+        )}
       </CardContent>
       <CardFooter>
         <Button variant="outline" onClick={handleLogout} disabled={busy}>

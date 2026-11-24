@@ -76,7 +76,6 @@ pub struct SessionInfo {
 pub struct Session {
     pub info: SessionInfo,
     /// Holding the connection keeps the database unlocked; dropping it locks it again.
-    #[allow(dead_code)] // used by the clinic features to come
     pub db: Connection,
     /// Version of the key `db` is encrypted with (as in DatabaseKey).
     key_version: u32,

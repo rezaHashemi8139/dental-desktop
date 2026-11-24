@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { ParseKeys } from "i18next";
 import { MIN_PASSWORD_LENGTH, USERNAME_PATTERN } from "./session";
 import { isValidNationalId, LICENSE_NUMBER_PATTERN, PHONE_PATTERN, POSTAL_CODE_PATTERN } from "./setup";
+import { isRecoveryKeyFormat } from "@/lib/backup";
 
 /**
  * Form rules. Error messages are translation keys, translated while rendering
@@ -82,3 +83,21 @@ export const existingOwnerSetupSchema = z.object({
   password: required,
 });
 export type SetupValues = z.infer<typeof newOwnerSetupSchema>;
+
+// --- Database backups (src/components/*-database-dialog.tsx) ----------------
+
+/** The backup password follows the same rules as an account password. */
+export const exportDatabaseSchema = z
+  .object({
+    password: newPassword,
+    confirmPassword: z.string(),
+  })
+  .refine(passwordsMatch, passwordMismatch);
+export type ExportDatabaseValues = z.infer<typeof exportDatabaseSchema>;
+
+export const restoreDatabaseSchema = z.object({
+  path: z.string().min(1, message("backup.validation.fileRequired")),
+  recoveryKey: z.string().trim().refine(isRecoveryKeyFormat, message("backup.validation.recoveryKeyFormat")),
+  password: required,
+});
+export type RestoreDatabaseValues = z.infer<typeof restoreDatabaseSchema>;

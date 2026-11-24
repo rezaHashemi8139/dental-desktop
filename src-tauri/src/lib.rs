@@ -1,5 +1,6 @@
 mod api;
 mod auth;
+mod backup;
 mod clock;
 mod connectivity;
 mod device;
@@ -13,12 +14,14 @@ mod settings;
 mod setup;
 mod vault;
 
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use auth::{ConnectionMode, Context, ReconnectError, Session, SessionInfo};
 use connectivity::{ConnectivityState, ConnectivityStatus, Watcher};
 use message::Message;
 use tauri::{AppHandle, Emitter, Manager, State};
+use zeroize::Zeroizing;
 
 /// Sent to the frontend when the session changes by itself (an offline session
 /// reconnected); the payload is the new SessionInfo.
@@ -32,8 +35,8 @@ struct AuthState {
     ctx: Context,
     watcher: Arc<Watcher>,
     session: Mutex<Option<Session>>,
-    /// Held by login, setup and reconnecting: they never overlap, since each may
-    /// rotate the database key or write the vault. A second request while one
+    /// Held by login, setup, reconnecting and backups: they never overlap, since each may
+    /// rotate the database key, write the vault or copy the database. A second request while one
     /// runs is refused instead of queued (no duplicate logins).
     busy: tauri::async_runtime::Mutex<()>,
 }
@@ -119,6 +122,37 @@ async fn logout(state: State<'_, AuthState>) -> Result<(), Message> {
         auth::logout(&state.ctx, session).await;
     }
     Ok(())
+}
+
+/// Saves an encrypted copy of the clinic database to `path` (chosen by the user
+/// in a Save dialog). Managers only. Returns the recovery key: shown once, never stored.
+#[tauri::command]
+async fn export_database(state: State<'_, AuthState>, path: PathBuf, password: String) -> Result<String, Message> {
+    // Never during a login or a reconnect, which may rekey the database.
+    let Ok(_busy) = state.busy.try_lock() else {
+        return Err(Message::new("auth.errors.busy"));
+    };
+    let password = Zeroizing::new(password);
+    let guard = state.session.lock().unwrap();
+    let session = backup::manager_session(guard.as_ref())?;
+    backup::export(&session.db, &state.ctx.data_dir, &path, &password)
+}
+
+/// Replaces the clinic database's contents with the backup at `path`. Managers only.
+#[tauri::command]
+async fn restore_database(
+    state: State<'_, AuthState>,
+    path: PathBuf,
+    password: String,
+    recovery_key: String,
+) -> Result<(), Message> {
+    let Ok(_busy) = state.busy.try_lock() else {
+        return Err(Message::new("auth.errors.busy"));
+    };
+    let (password, recovery_key) = (Zeroizing::new(password), Zeroizing::new(recovery_key));
+    let guard = state.session.lock().unwrap();
+    let session = backup::manager_session(guard.as_ref())?;
+    backup::restore(&session.db, &session.info, &state.ctx.data_dir, &path, &password, &recovery_key)
 }
 
 /// Runs after every connectivity check: tells the frontend about changes and,
@@ -220,6 +254,7 @@ fn open_devtools(window: tauri::WebviewWindow) {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             let api = api::Api::new(settings::server_url(&data_dir));
@@ -256,6 +291,8 @@ pub fn run() {
             sign_up,
             login,
             logout,
+            export_database,
+            restore_database,
             open_devtools,
             languages::get_language_catalog,
             languages::list_installed_languages,

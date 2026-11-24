@@ -39,7 +39,7 @@ fn key_pragma(key: &[u8; 32]) -> String {
     format!("x'{}'", hex::encode(key))
 }
 
-fn apply_key(conn: &Connection, key: &[u8; 32]) -> rusqlite::Result<()> {
+pub fn apply_key(conn: &Connection, key: &[u8; 32]) -> rusqlite::Result<()> {
     conn.pragma_update(None, "key", key_pragma(key))?;
     // SQLCipher only notices a wrong key when the database is first read.
     conn.query_row("SELECT count(*) FROM sqlite_master", [], |row| row.get::<_, i64>(0))?;
@@ -70,6 +70,58 @@ pub fn rekey(conn: &Connection, new_key: &[u8; 32]) -> rusqlite::Result<()> {
     conn.pragma_update(None, "rekey", key_pragma(new_key))
 }
 
+/// Runs `work` with the database at `path` attached as `name`, encrypted with
+/// `key` (created if missing), and always detaches it afterwards.
+fn with_attached<T>(
+    conn: &Connection,
+    path: &Path,
+    name: &str,
+    key: &[u8; 32],
+    work: impl FnOnce() -> rusqlite::Result<T>,
+) -> rusqlite::Result<T> {
+    conn.execute(&format!("ATTACH DATABASE ?1 AS {name} KEY ?2"), params![path.to_string_lossy(), key_pragma(key)])?;
+    let result = work();
+    let detached = conn.execute(&format!("DETACH DATABASE {name}"), []);
+    let value = result?;
+    detached?;
+    Ok(value)
+}
+
+/// Writes a copy of the open database to a new file at `path`, encrypted with `key`.
+pub fn export_copy(conn: &Connection, path: &Path, key: &[u8; 32]) -> rusqlite::Result<()> {
+    with_attached(conn, path, "copy", key, || {
+        conn.query_row("SELECT sqlcipher_export('copy')", [], |_| Ok(()))?;
+        // sqlcipher_export copies tables and data, not the schema version.
+        let version = schema_version(conn, "main")?;
+        conn.pragma_update(Some("copy"), "user_version", version)
+    })
+}
+
+/// Replaces everything in the open database with the contents of the database
+/// at `path` (encrypted with `key`, already migrated). Runs in one transaction:
+/// if anything fails, the open database is left as it was.
+pub fn replace_contents(conn: &Connection, path: &Path, key: &[u8; 32]) -> rusqlite::Result<()> {
+    with_attached(conn, path, "source", key, || {
+        let tx = conn.unchecked_transaction()?;
+        let objects: Vec<(String, String)> = {
+            let mut statement = tx.prepare(
+                "SELECT type, name FROM main.sqlite_master
+                 WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%'",
+            )?;
+            let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+            rows.collect::<rusqlite::Result<_>>()?
+        };
+        // Indexes and triggers go with their tables.
+        for (kind, name) in &objects {
+            tx.execute_batch(&format!("DROP {kind} main.\"{}\"", name.replace('"', "\"\"")))?;
+        }
+        tx.query_row("SELECT sqlcipher_export('main', 'source')", [], |_| Ok(()))?;
+        let version = schema_version(&tx, "source")?;
+        tx.pragma_update(Some("main"), "user_version", version)?;
+        tx.commit()
+    })
+}
+
 /// Schema changes, applied in order. PRAGMA user_version holds how many have run.
 const MIGRATIONS: &[&str] = &[
     // 1: users of this installation. Roles are kept only here, never on the server.
@@ -83,8 +135,18 @@ const MIGRATIONS: &[&str] = &[
     );",
 ];
 
-fn migrate(conn: &Connection) -> rusqlite::Result<()> {
-    let applied: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
+/// The schema version this app writes: how many migrations it has.
+pub fn latest_schema_version() -> i64 {
+    MIGRATIONS.len() as i64
+}
+
+/// How many migrations `schema` ("main" or an attached database) has had.
+pub fn schema_version(conn: &Connection, schema: &str) -> rusqlite::Result<i64> {
+    conn.pragma_query_value(Some(schema), "user_version", |row| row.get(0))
+}
+
+pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
+    let applied = schema_version(conn, "main")?;
     for (index, sql) in MIGRATIONS.iter().enumerate().skip(applied as usize) {
         let tx = conn.unchecked_transaction()?;
         tx.execute_batch(sql)?;
@@ -166,6 +228,47 @@ mod tests {
         let conn = open(&path, &key2).unwrap();
         let count: i64 = conn.query_row("SELECT count(*) FROM users", [], |row| row.get(0)).unwrap();
         assert_eq!(count, 2);
+    }
+
+    fn user_names(conn: &Connection) -> Vec<String> {
+        let mut statement = conn.prepare("SELECT username FROM users ORDER BY username").unwrap();
+        statement.query_map([], |row| row.get(0)).unwrap().map(Result::unwrap).collect()
+    }
+
+    /// A backup copy (other key) replaces the contents of another open database in place.
+    #[test]
+    fn export_copy_and_replace_contents() {
+        let dir = std::env::temp_dir().join(format!("dental-localdb-copy-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (key, copy_key, other_key) = ([6u8; 32], [7u8; 32], [8u8; 32]);
+
+        let source = create(&dir.join("source.db"), &key).unwrap();
+        record_login(&source, &[1; 16], "doctor", "Dr. A", ROLE_MANAGER, 100).unwrap();
+        record_login(&source, &[2; 16], "nurse", "N. B", ROLE_STAFF, 100).unwrap();
+        let copy_path = dir.join("copy.db");
+        export_copy(&source, &copy_path, &copy_key).unwrap();
+        assert!(open(&copy_path, &key).is_err(), "copy readable with the database key");
+        let copy = open(&copy_path, &copy_key).unwrap();
+        assert_eq!(schema_version(&copy, "main").unwrap(), latest_schema_version());
+        assert_eq!(user_names(&copy), ["doctor", "nurse"]);
+        drop(copy);
+
+        // Another database, with other data and its own key, open as in a session.
+        let target_path = dir.join("target.db");
+        let target = create(&target_path, &other_key).unwrap();
+        record_login(&target, &[3; 16], "someone", "S. C", ROLE_MANAGER, 100).unwrap();
+        replace_contents(&target, &copy_path, &copy_key).unwrap();
+        assert_eq!(user_names(&target), ["doctor", "nurse"]);
+        assert_eq!(schema_version(&target, "main").unwrap(), latest_schema_version());
+        drop(target);
+        // Still encrypted with its own key only.
+        assert_eq!(user_names(&open(&target_path, &other_key).unwrap()), ["doctor", "nurse"]);
+        assert!(open(&target_path, &copy_key).is_err());
+
+        // A failure (wrong key for the copy) leaves the open database untouched.
+        let target = open(&target_path, &other_key).unwrap();
+        assert!(replace_contents(&target, &copy_path, &key).is_err());
+        assert_eq!(user_names(&target), ["doctor", "nurse"]);
     }
 
     #[test]
