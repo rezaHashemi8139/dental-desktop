@@ -11,6 +11,7 @@ import { getSession } from "@/auth/store";
 import { RootLayout } from "@/pages/root-layout";
 import { AppLayout } from "@/pages/app-layout";
 import { AuthLayout, CheckingConnection, LoginPage, RegisterPage } from "@/pages/auth-layout";
+import { DatabasePage } from "@/pages/database-page";
 import { HomePage } from "@/pages/home-page";
 
 /**
@@ -19,7 +20,8 @@ import { HomePage } from "@/pages/home-page";
  * /            → /home or /login
  * /login       ┐ "auth" layout: only when logged out; checks the server first,
  * /register    ┘ then follows connectivity changes by itself
- * /home        — "app" layout: only when logged in; pages read the session with useSession()
+ * /home        ┐ "app" layout (sidebar): only when logged in; pages read the session with useSession()
+ * /database    ┘ backups and clearing the clinic database
  *
  * Pages read their route's data with getRouteApi("<route id>") instead of importing this file.
  */
@@ -92,10 +94,16 @@ const homeRoute = createRoute({
   component: HomePage,
 });
 
+const databaseRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "database",
+  component: DatabasePage,
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   authRoute.addChildren([loginRoute, registerRoute]),
-  appRoute.addChildren([homeRoute]),
+  appRoute.addChildren([homeRoute, databaseRoute]),
 ]);
 
 export const router = createRouter({

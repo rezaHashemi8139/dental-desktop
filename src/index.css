@@ -140,6 +140,19 @@
   img, a {
     -webkit-user-drag: none;
     }
+  /* Everything clickable shows the hand cursor; disabled controls keep the default one. */
+  button:not(:disabled),
+  a[href],
+  summary,
+  select:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  [role="tab"]:not([data-disabled]),
+  [role="menuitem"]:not([data-disabled]),
+  [role="menuitemradio"]:not([data-disabled]),
+  [role="menuitemcheckbox"]:not([data-disabled]),
+  [role="option"]:not([data-disabled]) {
+    cursor: pointer;
+    }
 }
 /* Scrollbars: thin, rounded and the same on every OS and in every scrollable area.
    Drawn with ::-webkit-scrollbar, which WebView2 (Windows), WKWebView (macOS) and

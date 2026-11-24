@@ -28,10 +28,24 @@
     <div id="root">
       <div class="splash" role="status" aria-label="Loading">
         <img class="splash-logo" src="/logo.svg" alt="" />
+        <div class="splash-title">Smart Management Base</div>
         <div class="splash-spinner"></div>
-        <div>Smart Management Base</div>
       </div>
     </div>
+
+    <script>
+      // The app name in the last used language (saved by src/i18n/index.ts).
+      // The default name above is only seen on the very first launch.
+      (function () {
+        try {
+          var saved = JSON.parse(localStorage.getItem("splashTitle") || "null");
+          if (!saved || !saved.title) return;
+          var element = document.querySelector(".splash-title");
+          element.textContent = saved.title;
+          element.dir = saved.dir || "auto";
+        } catch (e) {}
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

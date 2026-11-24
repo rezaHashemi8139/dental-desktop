@@ -84,7 +84,7 @@ export const existingOwnerSetupSchema = z.object({
 });
 export type SetupValues = z.infer<typeof newOwnerSetupSchema>;
 
-// --- Database backups (src/components/*-database-dialog.tsx) ----------------
+// --- Database page (src/components/*-database-dialog.tsx) ------------------
 
 /** The backup password follows the same rules as an account password. */
 export const exportDatabaseSchema = z
@@ -96,8 +96,17 @@ export const exportDatabaseSchema = z
 export type ExportDatabaseValues = z.infer<typeof exportDatabaseSchema>;
 
 export const restoreDatabaseSchema = z.object({
+  mode: z.enum(["replace", "merge"]),
   path: z.string().min(1, message("backup.validation.fileRequired")),
   recoveryKey: z.string().trim().refine(isRecoveryKeyFormat, message("backup.validation.recoveryKeyFormat")),
   password: required,
 });
 export type RestoreDatabaseValues = z.infer<typeof restoreDatabaseSchema>;
+
+/** Clearing is confirmed by typing one's own username, exactly as shown. */
+export function clearDatabaseSchema(username: string) {
+  return z.object({
+    confirmation: z.string().trim().refine((v) => v === username, message("database.validation.confirmationMismatch")),
+  });
+}
+export type ClearDatabaseValues = z.infer<ReturnType<typeof clearDatabaseSchema>>;

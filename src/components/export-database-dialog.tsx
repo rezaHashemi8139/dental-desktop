@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { save } from "@tauri-apps/plugin-dialog";
-import { CheckIcon, CopyIcon, DatabaseBackupIcon, KeyRoundIcon, LoaderCircleIcon, TriangleAlertIcon } from "lucide-react";
+import { CheckIcon, CopyIcon, KeyRoundIcon, LoaderCircleIcon, TriangleAlertIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { exportDatabaseSchema, type ExportDatabaseValues } from "@/auth/schemas";
 import { toRustMessage, translateMessage, type RustMessage } from "@/i18n/message";
@@ -18,7 +18,6 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 
@@ -32,32 +31,24 @@ interface ExportResult {
  * Saves an encrypted backup of the clinic database (managers only). The user
  * picks a password; once the file is saved the app shows the recovery key, once.
  * Neither is stored, so the dialog can only be closed after the user confirms
- * they have kept both.
+ * they have kept both. Opened from the Database page (src/pages/database-page.tsx).
  */
-export function ExportDatabaseDialog() {
-  const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
+export function ExportDatabaseDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const [result, setResult] = useState<ExportResult | null>(null);
 
   function changeOpen(next: boolean) {
     // The recovery key is on screen: only the confirm button closes the dialog.
     if (!next && result) return;
-    setOpen(next);
+    onOpenChange(next);
   }
 
   function finish() {
     setResult(null);
-    setOpen(false);
+    onOpenChange(false);
   }
 
   return (
     <Dialog open={open} onOpenChange={changeOpen}>
-      <DialogTrigger asChild>
-        <Button variant="outline">
-          <DatabaseBackupIcon data-icon="inline-start" />
-          {t("backup.export.open")}
-        </Button>
-      </DialogTrigger>
       <DialogContent showCloseButton={!result} className="max-h-[calc(100svh-2rem)] overflow-y-auto sm:max-w-md">
         {result ? (
           <ExportDone result={result} onDone={finish} />
@@ -104,7 +95,7 @@ function ExportForm({ onExported }: { onExported: (result: ExportResult) => void
         <DialogDescription>{t("backup.export.description")}</DialogDescription>
       </DialogHeader>
 
-      <Alert>
+      <Alert variant="warning">
         <TriangleAlertIcon />
         <AlertTitle>{t("backup.secretsTitle")}</AlertTitle>
         <AlertDescription>{t("backup.export.warning")}</AlertDescription>

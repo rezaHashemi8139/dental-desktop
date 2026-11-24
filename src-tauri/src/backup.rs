@@ -1,4 +1,5 @@
-//! Encrypted backups of the clinic database: export to a file, and restore from one.
+//! Encrypted backups of the clinic database (export to a file, restore from one),
+//! and clearing it.
 //!
 //! A backup is locked with two secrets, and neither is stored anywhere (not in
 //! the app, not on the server):
@@ -13,7 +14,7 @@
 //!   HKDF-SHA256(ikm = Argon2id(password, salt) || recovery key, salt = header, info = KEY_INFO).
 //! The header is bound into the key, so a changed header only makes the key wrong.
 //!
-//! Only managers may export or restore (`manager_session`).
+//! Only managers may export, restore or clear (`manager_session`).
 
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
@@ -21,6 +22,7 @@ use std::path::{Path, PathBuf};
 
 use hkdf::Hkdf;
 use rusqlite::Connection;
+use serde::Deserialize;
 use sha2::Sha256;
 use zeroize::Zeroizing;
 
@@ -59,9 +61,9 @@ fn file_error(details: impl std::fmt::Display) -> Message {
     Message::error("errors.fileSystem", details)
 }
 
-/// The open session, if its user may export and restore backups (managers only).
+/// The open session, if its user may export, restore or clear the database (managers only).
 pub fn manager_session(session: Option<&Session>) -> Result<&Session, Message> {
-    session.filter(|s| s.info.role == localdb::ROLE_MANAGER).ok_or_else(|| err("backup.errors.notAllowed"))
+    session.filter(|s| s.info.role == localdb::ROLE_MANAGER).ok_or_else(|| err("database.errors.notAllowed"))
 }
 
 // ---------------------------------------------------------------------------
@@ -205,8 +207,18 @@ fn write_backup(target: &Path, header: &[u8], copy: &Path) -> io::Result<()> {
     result
 }
 
-/// Replaces everything in the open database `db` with the backup at `source`;
-/// `user` (who restores it) keeps access.
+/// What a restore does with the data already on this computer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RestoreMode {
+    /// Everything is replaced with the backup.
+    Replace,
+    /// The backup's rows are added; where both have the same row, this computer's is kept.
+    Merge,
+}
+
+/// Restores the backup at `source` into the open database `db`, replacing or
+/// merging (`mode`); `user` (who restores it) keeps access.
 /// On any failure the database is left as it was.
 pub fn restore(
     db: &Connection,
@@ -215,6 +227,7 @@ pub fn restore(
     source: &Path,
     password: &str,
     recovery_key: &str,
+    mode: RestoreMode,
 ) -> Result<(), Message> {
     let recovery_key = parse_recovery_key(recovery_key).ok_or_else(|| err("backup.errors.invalidRecoveryKey"))?;
     if password.is_empty() {
@@ -235,18 +248,38 @@ pub fn restore(
     io::copy(&mut file, &mut File::create(&work.0).map_err(file_error)?).map_err(file_error)?;
     drop(file);
     prepare_copy(&work.0, &key)?;
-    localdb::replace_contents(db, &work.0, &key).map_err(internal)?;
+    match mode {
+        RestoreMode::Replace => localdb::replace_contents(db, &work.0, &key),
+        RestoreMode::Merge => localdb::merge_contents(db, &work.0, &key),
+    }
+    .map_err(internal)?;
+    // The restored data may not know the person who restored it.
+    keep_access(db, user, "restored");
+    Ok(())
+}
 
-    // The restored data may not know the person who restored it: keep their role.
-    // Not fatal: the restore is done, and their next login records them anyway.
+/// Deletes all clinic data in the open database `db`, keeping its schema; `user`
+/// (who clears it) keeps access. On failure nothing is deleted.
+pub fn clear(db: &Connection, user: &SessionInfo) -> Result<(), Message> {
+    localdb::clear_contents(db).map_err(internal)?;
+    // Not fatal: the data is already gone; this only gives the space back.
+    if let Err(e) = localdb::compact(db) {
+        eprintln!("Cleared, but the database file was not compacted: {e}");
+    }
+    keep_access(db, user, "cleared");
+    Ok(())
+}
+
+/// Records `user` in data that was just replaced (`done` says how), so they keep
+/// their role. Not fatal: the work is done, and their next login records them anyway.
+fn keep_access(db: &Connection, user: &SessionInfo, done: &str) {
     let recorded = hex::decode(&user.user_id).map_err(|e| e.to_string()).and_then(|user_id| {
         localdb::record_login(db, &user_id, &user.username, &user.full_name, &user.role, clock::now_unix())
             .map_err(|e| e.to_string())
     });
     if let Err(e) = recorded {
-        eprintln!("Restored, but {} not recorded in the restored data: {e}", user.username);
+        eprintln!("Database {done}, but {} not recorded in it: {e}", user.username);
     }
-    Ok(())
 }
 
 /// Opens the restored copy with the backup key and brings its schema up to date.
@@ -346,7 +379,8 @@ mod tests {
 
         let target = localdb::create(&dir.join("target.db"), &[2; 32]).unwrap();
         localdb::record_login(&target, &[3; 16], "other", "O. C", localdb::ROLE_MANAGER, 100).unwrap();
-        let restore_with = |password: &str, key: &str| restore(&target, &manager(), &dir, &backup, password, key);
+        let restore_with =
+            |password: &str, key: &str| restore(&target, &manager(), &dir, &backup, password, key, RestoreMode::Replace);
 
         assert_eq!(restore_with("Backup-passw0rd", "1234").unwrap_err().key, "backup.errors.invalidRecoveryKey");
         assert_eq!(restore_with("Wrong-passw0rd", &recovery_key).unwrap_err().key, "backup.errors.wrongSecrets");
@@ -356,13 +390,50 @@ mod tests {
 
         let not_a_backup = dir.join("random.dbk");
         fs::write(&not_a_backup, b"hello").unwrap();
-        let error = restore(&target, &manager(), &dir, &not_a_backup, "Backup-passw0rd", &recovery_key).unwrap_err();
+        let error = restore(&target, &manager(), &dir, &not_a_backup, "Backup-passw0rd", &recovery_key, RestoreMode::Replace).unwrap_err();
         assert_eq!(error.key, "backup.errors.notABackup");
 
         restore_with("Backup-passw0rd", &recovery_key).unwrap();
         assert!(!dir.join(RESTORE_WORK_FILE).exists(), "work file left behind");
         // The backup's users, plus whoever restored it.
         assert_eq!(user_names(&target), ["doctor", "nurse", "owner"]);
+    }
+
+    /// Merging adds the backup's rows and keeps this computer's where both have one.
+    #[test]
+    fn export_then_merge() {
+        let dir = temp_dir("merge");
+        let source = localdb::create(&dir.join("source.db"), &[1; 32]).unwrap();
+        localdb::record_login(&source, &[1; 16], "doctor", "Dr. A", localdb::ROLE_MANAGER, 100).unwrap();
+        localdb::record_login(&source, &[2; 16], "nurse", "N. B", localdb::ROLE_MANAGER, 100).unwrap();
+        let backup = dir.join("clinic.dbk");
+        let recovery_key = export(&source, &dir, &backup, "Backup-passw0rd").unwrap();
+
+        let target = localdb::create(&dir.join("target.db"), &[2; 32]).unwrap();
+        // The same nurse, with another role here.
+        localdb::record_login(&target, &[2; 16], "nurse", "N. B", localdb::ROLE_STAFF, 100).unwrap();
+        localdb::record_login(&target, &[3; 16], "other", "O. C", localdb::ROLE_STAFF, 100).unwrap();
+
+        restore(&target, &manager(), &dir, &backup, "Backup-passw0rd", &recovery_key, RestoreMode::Merge).unwrap();
+        assert_eq!(user_names(&target), ["doctor", "nurse", "other", "owner"]);
+        let nurse_role: String =
+            target.query_row("SELECT role FROM users WHERE username = 'nurse'", [], |row| row.get(0)).unwrap();
+        assert_eq!(nurse_role, localdb::ROLE_STAFF, "this computer's row was overwritten");
+        assert_eq!(localdb::schema_version(&target, "main").unwrap(), localdb::latest_schema_version());
+    }
+
+    #[test]
+    fn clear_keeps_who_cleared() {
+        let dir = temp_dir("clear");
+        let db = localdb::create(&dir.join("clinic.db"), &[1; 32]).unwrap();
+        localdb::record_login(&db, &[1; 16], "doctor", "Dr. A", localdb::ROLE_MANAGER, 100).unwrap();
+        localdb::record_login(&db, &[2; 16], "nurse", "N. B", localdb::ROLE_STAFF, 100).unwrap();
+
+        clear(&db, &manager()).unwrap();
+        assert_eq!(user_names(&db), ["owner"]);
+        let role: String = db.query_row("SELECT role FROM users", [], |row| row.get(0)).unwrap();
+        assert_eq!(role, localdb::ROLE_MANAGER);
+        assert_eq!(localdb::schema_version(&db, "main").unwrap(), localdb::latest_schema_version());
     }
 
     #[test]

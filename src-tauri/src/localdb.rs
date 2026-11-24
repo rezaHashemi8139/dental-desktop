@@ -122,7 +122,76 @@ pub fn replace_contents(conn: &Connection, path: &Path, key: &[u8; 32]) -> rusql
     })
 }
 
+/// Adds the rows of the database at `path` (encrypted with `key`, already
+/// migrated) to the open database. A row whose primary key (or another unique
+/// value) is already here is skipped: what this database has wins. Runs in one
+/// transaction: if anything fails, the open database is left as it was.
+///
+/// Rows are matched by primary key, so every table must use globally unique ids
+/// (like the server's random user ids), never local counters.
+pub fn merge_contents(conn: &Connection, path: &Path, key: &[u8; 32]) -> rusqlite::Result<()> {
+    with_attached(conn, path, "source", key, || {
+        let tx = conn.unchecked_transaction()?;
+        // Rows that refer to each other may arrive in any order.
+        tx.pragma_update(None, "defer_foreign_keys", true)?;
+        for table in table_names(&tx, "source")? {
+            // Only the columns both sides have (both are at the latest schema version anyway).
+            let here = column_names(&tx, "main", &table)?;
+            let columns: Vec<String> =
+                column_names(&tx, "source", &table)?.into_iter().filter(|c| here.contains(c)).map(|c| quote(&c)).collect();
+            if columns.is_empty() {
+                continue;
+            }
+            let columns = columns.join(", ");
+            let table = quote(&table);
+            tx.execute(&format!("INSERT OR IGNORE INTO main.{table} ({columns}) SELECT {columns} FROM source.{table}"), [])?;
+        }
+        tx.commit()
+    })
+}
+
+/// An SQL identifier in double quotes.
+fn quote(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
+}
+
+/// The tables of `schema` ("main" or an attached database), without SQLite's own.
+fn table_names(conn: &Connection, schema: &str) -> rusqlite::Result<Vec<String>> {
+    let mut statement = conn.prepare(&format!(
+        "SELECT name FROM {schema}.sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+    ))?;
+    let rows = statement.query_map([], |row| row.get(0))?;
+    rows.collect()
+}
+
+/// The columns of `table` in `schema`; empty if there is no such table.
+fn column_names(conn: &Connection, schema: &str, table: &str) -> rusqlite::Result<Vec<String>> {
+    let mut statement = conn.prepare("SELECT name FROM pragma_table_info(?1, ?2)")?;
+    let rows = statement.query_map([table, schema], |row| row.get(0))?;
+    rows.collect()
+}
+
+/// Deletes every row of every table, keeping the schema and its version. Runs in
+/// one transaction: if anything fails, nothing is deleted.
+pub fn clear_contents(conn: &Connection) -> rusqlite::Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    // Tables that refer to each other may be emptied in any order.
+    tx.pragma_update(None, "defer_foreign_keys", true)?;
+    for table in table_names(&tx, "main")? {
+        tx.execute(&format!("DELETE FROM main.{}", quote(&table)), [])?;
+    }
+    tx.commit()
+}
+
+/// Rebuilds the database file without its free pages, so deleted data no longer
+/// takes up space in it.
+pub fn compact(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch("VACUUM")
+}
+
 /// Schema changes, applied in order. PRAGMA user_version holds how many have run.
+/// Every primary key must be globally unique (random ids, never local counters),
+/// so a backup can be merged into another clinic database (`merge_contents`).
 const MIGRATIONS: &[&str] = &[
     // 1: users of this installation. Roles are kept only here, never on the server.
     "CREATE TABLE users (

@@ -62,6 +62,8 @@ const DEFAULT_LANGUAGE = "fa";
 const FALLBACK_LANGUAGE = "fa";
 const STORAGE_KEY = "language";
 const HIDDEN_STORAGE_KEY = "hiddenLanguages";
+/** The app name in the current language, read by the splash in index.html before any script loads. */
+const SPLASH_STORAGE_KEY = "splashTitle";
 const NAMESPACE = "translation";
 
 // ---------------------------------------------------------------------------
@@ -291,6 +293,24 @@ function applyLanguage(code: string) {
     localStorage.setItem(STORAGE_KEY, language.code);
   } catch {
     // Storage unavailable: the choice just won't be remembered.
+  }
+  updateSplashTitle(i18n.t("app.title"), language.dir);
+}
+
+/**
+ * Shows the app name in the current language under the splash logo, and remembers it
+ * so the next launch's splash (drawn before the languages load) uses it right away.
+ */
+function updateSplashTitle(title: string, dir: string) {
+  const element = document.querySelector<HTMLElement>(".splash-title");
+  if (element) {
+    element.textContent = title;
+    element.dir = dir;
+  }
+  try {
+    localStorage.setItem(SPLASH_STORAGE_KEY, JSON.stringify({ title, dir }));
+  } catch {
+    // Storage unavailable: the next splash shows the default name.
   }
 }
 

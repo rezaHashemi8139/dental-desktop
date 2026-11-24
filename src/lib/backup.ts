@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 /**
- * Encrypted backups of the clinic database (see src-tauri/src/backup.rs).
+ * Encrypted backups of the clinic database, and clearing it (see src-tauri/src/backup.rs).
  * Managers only. A backup is locked with a password the user chooses and a
  * recovery key the app makes; neither is stored anywhere, so both are needed to
  * restore it. Each call throws a RustMessage (src/i18n/message.ts) on failure.
@@ -21,9 +21,20 @@ export function exportDatabase(path: string, password: string): Promise<string> 
   return invoke<string>("export_database", { path, password });
 }
 
-/** Replaces all clinic data on this computer with the backup at `path`. */
-export function restoreDatabase(path: string, password: string, recoveryKey: string): Promise<void> {
-  return invoke("restore_database", { path, password, recoveryKey });
+/**
+ * What a restore does with the data already on this computer: replace it all, or
+ * add the backup's data to it, keeping this computer's version of what both have.
+ */
+export type RestoreMode = "replace" | "merge";
+
+/** Restores the backup at `path` into the clinic data on this computer (see RestoreMode). */
+export function restoreDatabase(path: string, password: string, recoveryKey: string, mode: RestoreMode): Promise<void> {
+  return invoke("restore_database", { path, password, recoveryKey, mode });
+}
+
+/** Deletes all clinic data on this computer; the manager who does it keeps access. */
+export function clearDatabase(): Promise<void> {
+  return invoke("clear_database");
 }
 
 /**

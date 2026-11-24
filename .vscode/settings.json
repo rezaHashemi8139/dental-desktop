@@ -25,7 +25,10 @@
     },
     "cSpell.words": [
         "Condvar",
+        "localdb",
+        "lockdown",
         "NCSI",
-        "wakeup"
+        "wakeup",
+        "Zeroizing"
     ]
 }

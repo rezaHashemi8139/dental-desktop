@@ -19,13 +19,24 @@ html.dark, html.dark body { background: #0a0a0a; }    /* = --background (dark) *
 html.dark .splash { color: #a1a1a1; }
 
 .splash-logo {
-  width: 72px;
-  height: 72px;
+  width: 96px;
+  height: 96px;
 }
 
+/* The app name, right under the logo. */
+.splash-title {
+  margin-top: -4px;
+  color: #0a0a0a;                                     /* = --foreground (light) */
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+html.dark .splash-title { color: #fafafa; }           /* = --foreground (dark) */
+
 .splash-spinner {
-  width: 28px;
-  height: 28px;
+  margin-top: 16px;
+  width: 24px;
+  height: 24px;
   border: 3px solid currentColor;
   border-right-color: transparent;
   border-radius: 50%;

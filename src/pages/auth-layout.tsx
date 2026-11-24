@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
+import { PageArea } from "@/pages/root-layout";
 import { LoginForm } from "./login-form";
 import { RegisterForm } from "./register-form";
 import { SetupForm } from "./setup-form";
@@ -24,10 +25,12 @@ const ModeContext = createContext<ConnectionMode>("online");
 export function CheckingConnection() {
   const { t } = useTranslation();
   return (
-    <p className="flex items-center gap-2 text-sm text-muted-foreground">
-      <LoaderCircleIcon className="size-4 animate-spin" />
-      {t("auth.connection.checking")}
-    </p>
+    <PageArea>
+      <p className="flex items-center gap-2 text-sm text-muted-foreground">
+        <LoaderCircleIcon className="size-4 animate-spin" />
+        {t("auth.connection.checking")}
+      </p>
+    </PageArea>
   );
 }
 
@@ -65,6 +68,14 @@ function useLiveMode(): ConnectionMode {
  * and on a computer that was never set up, the clinic setup comes first.
  */
 export function AuthLayout() {
+  return (
+    <PageArea>
+      <AuthScreen />
+    </PageArea>
+  );
+}
+
+function AuthScreen() {
   const { t } = useTranslation();
   const mode = useLiveMode();
   const tab = useLocation({ select: (location) => (location.pathname === "/register" ? "register" : "login") });
@@ -85,7 +96,7 @@ export function AuthLayout() {
           <CardDescription>{t("setup.description")}</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-6">
-          <Alert>
+          <Alert variant="info">
             <InfoIcon />
             <AlertTitle>{t("setup.firstRun.title")}</AlertTitle>
             <AlertDescription>

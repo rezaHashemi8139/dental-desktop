@@ -35,7 +35,7 @@ struct AuthState {
     ctx: Context,
     watcher: Arc<Watcher>,
     session: Mutex<Option<Session>>,
-    /// Held by login, setup, reconnecting and backups: they never overlap, since each may
+    /// Held by login, setup, reconnecting, backups and clearing: they never overlap, since each may
     /// rotate the database key, write the vault or copy the database. A second request while one
     /// runs is refused instead of queued (no duplicate logins).
     busy: tauri::async_runtime::Mutex<()>,
@@ -138,13 +138,15 @@ async fn export_database(state: State<'_, AuthState>, path: PathBuf, password: S
     backup::export(&session.db, &state.ctx.data_dir, &path, &password)
 }
 
-/// Replaces the clinic database's contents with the backup at `path`. Managers only.
+/// Restores the backup at `path` into the clinic database, replacing its contents
+/// or merging into them (`mode`). Managers only.
 #[tauri::command]
 async fn restore_database(
     state: State<'_, AuthState>,
     path: PathBuf,
     password: String,
     recovery_key: String,
+    mode: backup::RestoreMode,
 ) -> Result<(), Message> {
     let Ok(_busy) = state.busy.try_lock() else {
         return Err(Message::new("auth.errors.busy"));
@@ -152,7 +154,18 @@ async fn restore_database(
     let (password, recovery_key) = (Zeroizing::new(password), Zeroizing::new(recovery_key));
     let guard = state.session.lock().unwrap();
     let session = backup::manager_session(guard.as_ref())?;
-    backup::restore(&session.db, &session.info, &state.ctx.data_dir, &path, &password, &recovery_key)
+    backup::restore(&session.db, &session.info, &state.ctx.data_dir, &path, &password, &recovery_key, mode)
+}
+
+/// Deletes all clinic data on this computer; the manager who does it keeps access. Managers only.
+#[tauri::command]
+async fn clear_database(state: State<'_, AuthState>) -> Result<(), Message> {
+    let Ok(_busy) = state.busy.try_lock() else {
+        return Err(Message::new("auth.errors.busy"));
+    };
+    let guard = state.session.lock().unwrap();
+    let session = backup::manager_session(guard.as_ref())?;
+    backup::clear(&session.db, &session.info)
 }
 
 /// Runs after every connectivity check: tells the frontend about changes and,
@@ -293,6 +306,7 @@ pub fn run() {
             logout,
             export_database,
             restore_database,
+            clear_database,
             open_devtools,
             languages::get_language_catalog,
             languages::list_installed_languages,
