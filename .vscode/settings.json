@@ -22,5 +22,10 @@
         "statusBarItem.hoverBackground": "#85107b",
         "statusBar.debuggingBackground": "#8a1f80",
         "statusBar.noFolderBackground": "#3b0036"
-    }
+    },
+    "cSpell.words": [
+        "Condvar",
+        "NCSI",
+        "wakeup"
+    ]
 }
