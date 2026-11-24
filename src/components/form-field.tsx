@@ -34,7 +34,10 @@ export function FormField({ id, label, hint, error, latin, onKeyDown, onPaste, .
 
   return (
     <div className="flex flex-col gap-1.5">
-      <Label htmlFor={id}>{label}</Label>
+      {/* A little more room under the label than between the input and its hint. */}
+      <Label htmlFor={id} className="mb-1">
+        {label}
+      </Label>
       <Input id={id} aria-invalid={!!error} aria-describedby={describedBy} {...inputProps} {...latinProps} />
       {error ? (
         <p id={`${id}-error`} className="text-xs text-destructive">

@@ -21,7 +21,7 @@ use crate::api::{Api, ApiError};
 use crate::clock;
 
 /// Time between checks while online.
-const ONLINE_INTERVAL: Duration = Duration::from_secs(30);
+const ONLINE_INTERVAL: Duration = Duration::from_secs(5 * 60);
 /// Time between checks while not online: grows with each failed check, then stays at the last.
 const RETRY_INTERVALS: &[Duration] = &[
     Duration::from_secs(5),

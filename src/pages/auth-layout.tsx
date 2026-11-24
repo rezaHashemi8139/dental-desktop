@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState } from "react";
-import { getRouteApi, Navigate, Outlet, useLocation, useNavigate, useRouter, useRouterState } from "@tanstack/react-router";
+import { getRouteApi, Navigate, Outlet, useLocation, useNavigate, useRouter } from "@tanstack/react-router";
 import { CloudOffIcon, DatabaseIcon, LoaderCircleIcon, RefreshCwIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useConnectivity } from "@/auth/connectivity";
@@ -9,6 +9,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { cn } from "@/lib/utils";
 import { LoginForm } from "./login-form";
 import { RegisterForm } from "./register-form";
 import { SetupForm } from "./setup-form";
@@ -145,14 +146,36 @@ export function AuthLayout() {
   );
 }
 
-/** Checks the server again (re-runs the route loader). */
+/** Keeps the retry spinner visible at least this long, so a fast answer is still seen as a check. */
+const MIN_RETRY_SPIN_MS = 600;
+
+/**
+ * Checks the server again (re-runs the route loader). The icon spins until the
+ * answer is in, including while a check started elsewhere (e.g. the watcher) runs.
+ */
 function RetryButton() {
   const { t } = useTranslation();
   const router = useRouter();
-  const loading = useRouterState({ select: (state) => state.isLoading });
+  const { checking } = useConnectivity();
+  const [retrying, setRetrying] = useState(false);
+  const busy = retrying || checking;
+
+  async function retry() {
+    setRetrying(true);
+    try {
+      // `sync` waits for the loader; without it the reload runs in the background and resolves at once.
+      await Promise.all([
+        router.invalidate({ sync: true }),
+        new Promise((resolve) => setTimeout(resolve, MIN_RETRY_SPIN_MS)),
+      ]);
+    } finally {
+      setRetrying(false);
+    }
+  }
+
   return (
-    <Button variant="outline" className="w-full" onClick={() => router.invalidate()} disabled={loading}>
-      {loading ? <LoaderCircleIcon className="animate-spin" /> : <RefreshCwIcon />}
+    <Button variant="outline" className="w-full" onClick={retry} disabled={busy}>
+      <RefreshCwIcon className={cn(busy && "animate-spin")} />
       {t("auth.connection.retry")}
     </Button>
   );
