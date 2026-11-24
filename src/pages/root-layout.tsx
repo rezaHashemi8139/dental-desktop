@@ -10,7 +10,10 @@ export function RootLayout() {
   return (
     <div className="flex min-h-svh flex-col">
       <header className="flex items-center justify-between gap-4 border-b px-4 py-2">
-        <h1 className="text-sm font-semibold">{t("app.title")}</h1>
+        <div className="flex items-center gap-2">
+          <img src="/logo.svg" alt="" className="size-6" />
+          <h1 className="text-sm font-semibold">{t("app.title")}</h1>
+        </div>
         <div className="flex items-center gap-2">
           <ConnectivityIndicator />
           <ThemeSwitcher />

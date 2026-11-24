@@ -18,6 +18,11 @@ html.dark, html.dark body { background: #0a0a0a; }    /* = --background (dark) *
 }
 html.dark .splash { color: #a1a1a1; }
 
+.splash-logo {
+  width: 72px;
+  height: 72px;
+}
+
 .splash-spinner {
   width: 28px;
   height: 28px;
