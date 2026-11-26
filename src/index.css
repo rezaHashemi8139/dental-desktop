@@ -183,3 +183,112 @@
 ::-webkit-scrollbar-button {
     display: none;
 }
+/* Login screen backdrop (src/components/auth-backdrop.tsx): the logo built as a
+   solid cube, tumbling behind the form while it drifts around, with soft moving
+   light. The drift and the tumble run on separate elements with different
+   lengths, so the path never visibly repeats. */
+.auth-backdrop-stage {
+    /* Short, so the near corner looms and the far one shrinks. */
+    perspective: 1000px;
+}
+.auth-backdrop-drift {
+    transform-style: preserve-3d;
+    animation: auth-cube-drift 26s ease-in-out infinite alternate;
+}
+.auth-backdrop-cube {
+    --cube-size: min(48vmin, 400px);
+    /* How deep the letters are carved: how far the core sits behind each face. */
+    --cube-depth: calc(var(--cube-size) * 0.06);
+    width: var(--cube-size);
+    height: var(--cube-size);
+    transform-style: preserve-3d;
+    animation: auth-cube-tumble 36s ease-in-out infinite;
+}
+.auth-backdrop-face {
+    --face-z: calc(var(--cube-size) / 2);
+    /* Faces darker or lighter by their side, like a lit solid. */
+    filter: brightness(var(--shade));
+    /* Faces turned away are behind the solid anyway: skip drawing them. */
+    backface-visibility: hidden;
+}
+/* Seen through the letters and seams. Full size although set back: near the
+   edges the cores cross, which closes the seams between the faces too. */
+.auth-backdrop-core {
+    --face-z: calc(var(--cube-size) / 2 - var(--cube-depth));
+    /* Rounded like the letters' corners; square, the crossing cores poke out there. */
+    border-radius: 8%;
+}
+.auth-backdrop-side-front {
+    transform: translateZ(var(--face-z));
+}
+.auth-backdrop-side-back {
+    transform: rotateY(180deg) translateZ(var(--face-z));
+}
+.auth-backdrop-side-right {
+    transform: rotateY(90deg) translateZ(var(--face-z));
+}
+.auth-backdrop-side-left {
+    transform: rotateY(-90deg) translateZ(var(--face-z));
+}
+.auth-backdrop-side-top {
+    transform: rotateX(90deg) translateZ(var(--face-z));
+}
+.auth-backdrop-side-bottom {
+    transform: rotateX(-90deg) translateZ(var(--face-z));
+}
+.auth-backdrop-glow {
+    animation: auth-glow-drift 22s ease-in-out infinite alternate;
+}
+.auth-backdrop-glow-late {
+    animation-duration: 30s;
+    animation-delay: -12s;
+}
+/* Starts and ends in the logo's own isometric pose (top, left and front faces
+   showing), with a full turn around Y and tips on X in between. */
+@keyframes auth-cube-tumble {
+    0% {
+        transform: rotateX(-35.26deg) rotateY(45deg) rotateZ(0deg);
+    }
+    25% {
+        transform: rotateX(20deg) rotateY(135deg) rotateZ(8deg);
+    }
+    50% {
+        transform: rotateX(-45deg) rotateY(225deg) rotateZ(-6deg);
+    }
+    75% {
+        transform: rotateX(15deg) rotateY(315deg) rotateZ(6deg);
+    }
+    100% {
+        transform: rotateX(-35.26deg) rotateY(405deg) rotateZ(0deg);
+    }
+}
+/* Wanders across a good part of the screen, and nearer and farther. */
+@keyframes auth-cube-drift {
+    0% {
+        transform: translate(-14vw, -8vh) translateZ(-60px);
+    }
+    35% {
+        transform: translate(10vw, -12vh) translateZ(80px);
+    }
+    70% {
+        transform: translate(-6vw, 12vh) translateZ(-20px);
+    }
+    100% {
+        transform: translate(14vw, 8vh) translateZ(60px);
+    }
+}
+@keyframes auth-glow-drift {
+    from {
+        transform: translate(-6%, -4%) scale(1);
+    }
+    to {
+        transform: translate(8%, 6%) scale(1.15);
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .auth-backdrop-drift,
+    .auth-backdrop-cube,
+    .auth-backdrop-glow {
+        animation: none;
+    }
+}

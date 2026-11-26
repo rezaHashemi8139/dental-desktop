@@ -7,6 +7,7 @@ import { connectionStatus, type ConnectionMode, type Session } from "@/auth/sess
 import { listMyClinics, type PendingSetup } from "@/auth/setup";
 import { getEndedMessage, getEndedNotice, setSession } from "@/auth/store";
 import type { RustMessage } from "@/i18n/message";
+import { AuthBackdrop } from "@/components/auth-backdrop";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -81,15 +82,23 @@ function useLiveMode(): ConnectionMode {
 
 /**
  * /login and /register: what's offered depends on whether the server is reachable,
- * and on a computer that was never set up, the clinic setup comes first.
+ * and on a computer that was never set up, the clinic setup comes first. The
+ * moving logo behind the cards shows through them (AUTH_CARD).
  */
 export function AuthLayout() {
   return (
-    <PageArea>
-      <AuthScreen />
-    </PageArea>
+    // Its own stacking context, so the backdrop (z -10) stays above the page background.
+    <div className="relative isolate flex min-w-0 flex-1">
+      <AuthBackdrop />
+      <PageArea>
+        <AuthScreen />
+      </PageArea>
+    </div>
   );
 }
+
+/** The login screen's cards: see-through and blurred, so the backdrop shows behind the form. */
+const AUTH_CARD = "bg-card/80 backdrop-blur-md";
 
 function AuthScreen() {
   const { t } = useTranslation();
@@ -105,7 +114,7 @@ function AuthScreen() {
 
   if (pending) {
     return (
-      <Card className="w-full max-w-2xl">
+      <Card className={cn("w-full max-w-2xl", AUTH_CARD)}>
         <ClinicSetup
           setup={pending}
           onLoggedIn={(session, trial) => {
@@ -133,7 +142,7 @@ function AuthScreen() {
     const database = mode === "localDatabaseUnavailable";
     const Icon = database ? DatabaseIcon : CloudOffIcon;
     return (
-      <Card className="w-full max-w-sm">
+      <Card className={cn("w-full max-w-sm", AUTH_CARD)}>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Icon className="size-5" />
@@ -158,7 +167,7 @@ function AuthScreen() {
   return (
     <ModeContext.Provider value={mode}>
       <SetupContext.Provider value={setupSteps}>
-        <Card className="w-full max-w-sm">
+        <Card className={cn("w-full max-w-sm", AUTH_CARD)}>
           <CardHeader>
             <CardTitle>{t(register ? "auth.register.title" : "auth.login.title")}</CardTitle>
             <CardDescription>{t(register ? "auth.register.description" : "auth.login.description")}</CardDescription>
