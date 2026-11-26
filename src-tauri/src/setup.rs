@@ -25,7 +25,8 @@ pub struct ClinicInput {
     pub name: String,
     pub license_number: String,
     pub phone: String,
-    pub city: String,
+    /// A city from `cities` (its province comes with it).
+    pub city_id: u32,
     pub address: String,
     #[serde(default)]
     pub postal_code: String,
@@ -113,7 +114,7 @@ impl ClinicInput {
             name: trimmed(&self.name),
             license_number: trimmed(&self.license_number),
             phone: trimmed(&self.phone),
-            city: trimmed(&self.city),
+            city_id: self.city_id,
             address: trimmed(&self.address),
             postal_code: trimmed(&self.postal_code),
             location: Some(proto::GeoLocation { latitude: self.latitude, longitude: self.longitude }),
@@ -154,6 +155,34 @@ fn api_error(error: ApiError) -> Message {
         ApiError::Network(_) => Message::new("auth.errors.serverUnreachable"),
         ApiError::Server { code, reason } => server_error(&code, &reason),
     }
+}
+
+/// A province with its cities, for the clinic form. Names are the official Persian ones.
+#[derive(Debug, Serialize)]
+pub struct Province {
+    pub id: u32,
+    pub name: String,
+    pub cities: Vec<City>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct City {
+    pub id: u32,
+    pub name: String,
+}
+
+/// Iran's provinces and cities (ordered by ID; the form sorts them by name).
+pub async fn cities(ctx: &Context) -> Result<Vec<Province>, Message> {
+    let response = ctx.api.list_cities().await.map_err(api_error)?;
+    Ok(response
+        .provinces
+        .into_iter()
+        .map(|province| Province {
+            id: province.id,
+            name: province.name,
+            cities: province.cities.into_iter().map(|city| City { id: city.id, name: city.name }).collect(),
+        })
+        .collect())
 }
 
 /// Whether this installation still has to be set up (never registered with the server).

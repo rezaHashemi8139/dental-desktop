@@ -67,11 +67,17 @@ pub struct SessionInfo {
     /// Local role (manager, staff, ...), stored in the local database.
     pub role: String,
     pub is_admin: bool,
+    /// Owns the clinic, so can buy its subscription (billing.rs). Only known
+    /// online: false for an offline session until it reconnects.
+    pub is_owner: bool,
     /// Logged in through the server (true) or from the vault (false). An offline
     /// session becomes online once it reconnects.
     pub online: bool,
     /// Until when this user can log in without the server (unix seconds).
     pub offline_until: i64,
+    /// Set for a restricted login (`BillingSession`): why the clinic cannot be
+    /// used now, e.g. no subscription in force. Only the subscription page works.
+    pub billing: Option<Message>,
 }
 
 /// An open login: the database stays open until logout.
@@ -92,6 +98,28 @@ pub struct Session {
     /// and differs between sessions: a sync whose request was sent before such a
     /// change drops its answer (sync.rs).
     data_epoch: u64,
+}
+
+/// A restricted login: the clinic's owner, while the clinic cannot be used (no
+/// subscription in force, or more clinics or computers than it allows). The server
+/// sends no database keys and no offline grant, so the database stays locked;
+/// only the subscription calls work (billing.rs). Once a purchase is approved the
+/// owner logs in again for a full session.
+pub struct BillingSession {
+    pub info: SessionInfo,
+    token: Zeroizing<String>,
+}
+
+impl BillingSession {
+    pub fn token(&self) -> &str {
+        &self.token
+    }
+}
+
+/// What a login opened.
+pub enum Login {
+    Full(Session),
+    Billing(BillingSession),
 }
 
 /// After this many wrong account passwords in a row for sensitive actions, the
@@ -204,6 +232,7 @@ pub(crate) fn server_error(code: &str, reason: &str) -> Message {
         "identity_mismatch" => err("person.errors.identityMismatch"),
         "identity_required" => err("setup.errors.identityRequired"),
         "clinic_not_found" => err("setup.errors.clinicNotFound"),
+        "city_not_found" => err("setup.errors.cityNotFound"),
         "not_clinic_owner" => err("setup.errors.notClinicOwner"),
         "no_clinic" => err("auth.errors.noClinic"),
         PASSWORD_CHANGE_REQUIRED => err(PASSWORD_CHANGE_REQUIRED_ERROR),
@@ -212,6 +241,14 @@ pub(crate) fn server_error(code: &str, reason: &str) -> Message {
         "clinic_limit_exceeded" => err("auth.errors.clinicLimitExceeded"),
         "device_limit_exceeded" => err("auth.errors.deviceLimitExceeded"),
         "patient_not_found" => err("patients.errors.historyNotFound"),
+        "subscription_required" => err("billing.errors.subscriptionRequired"),
+        "plan_not_found" => err("billing.errors.planNotFound"),
+        "plan_inactive" => err("billing.errors.planInactive"),
+        "renewal_queued" => err("billing.errors.renewalQueued"),
+        "payment_account_not_found" => err("billing.errors.paymentAccountNotFound"),
+        "payment_pending" => err("billing.errors.paymentPending"),
+        "payment_not_found" => err("billing.errors.paymentNotFound"),
+        "payment_not_pending" => err("billing.errors.paymentNotPending"),
         crate::api::UPDATE_REQUIRED => err(crate::update::REQUIRED_ERROR),
         _ => Message::error("auth.errors.server", format!("{code}: {reason}")),
     }
@@ -354,8 +391,9 @@ pub async fn sign_up(ctx: &Context, account: &SignUpInput) -> Result<(), Message
 }
 
 /// Logs in through the server when `online` (falling back to offline if it turns
-/// out to be unreachable after all), otherwise straight from the vault.
-pub async fn login(ctx: &Context, username: &str, password: &str, online: bool) -> Result<Session, Message> {
+/// out to be unreachable after all), otherwise straight from the vault. The clinic's
+/// owner gets a restricted `BillingSession` while the clinic cannot be used.
+pub async fn login(ctx: &Context, username: &str, password: &str, online: bool) -> Result<Login, Message> {
     let username = username.trim();
     if username.is_empty() || password.is_empty() {
         return Err(err("auth.errors.invalidCredentials"));
@@ -368,18 +406,55 @@ pub async fn login(ctx: &Context, username: &str, password: &str, online: bool) 
         .ok_or_else(|| err("setup.errors.required"))?;
 
     if !online {
-        return login_offline(ctx, &installation, username, password);
+        return login_offline(ctx, &installation, username, password).map(Login::Full);
     }
     match request_login(ctx, &installation, username, password).await {
-        Ok((client_key, response)) => login_online(ctx, &installation, &client_key, password, response).await,
-        Err(ApiError::Network(_)) => login_offline(ctx, &installation, username, password),
+        Ok((_, response)) if response.billing_only => {
+            // Nobody may use the clinic now, offline included.
+            revoke_offline_access(ctx, &installation, username, &response.billing_reason)?;
+            billing_session(response).map(Login::Billing)
+        }
+        Ok((client_key, response)) => {
+            login_online(ctx, &installation, &client_key, password, response).await.map(Login::Full)
+        }
+        Err(ApiError::Network(_)) => login_offline(ctx, &installation, username, password).map(Login::Full),
         Err(ApiError::Server { code, .. }) if server_unavailable(&code) => {
-            login_offline(ctx, &installation, username, password)
+            login_offline(ctx, &installation, username, password).map(Login::Full)
         }
         Err(ApiError::Server { code, reason }) => {
             revoke_offline_access(ctx, &installation, username, &reason)?;
             Err(server_error(&code, &reason))
         }
+    }
+}
+
+/// A billing-only LoginResponse (no keys, no grant) as a restricted session.
+fn billing_session(response: proto::LoginResponse) -> Result<BillingSession, Message> {
+    let user = response.user.ok_or_else(|| internal("login response without user"))?;
+    Ok(BillingSession {
+        info: SessionInfo {
+            user_id: hex::encode(&user.id),
+            username: user.username,
+            full_name: user.full_name,
+            // No local database to read a role from; only the owner gets here.
+            role: localdb::ROLE_MANAGER.to_owned(),
+            is_admin: response.is_admin,
+            is_owner: response.is_owner,
+            online: true,
+            offline_until: 0,
+            billing: Some(billing_reason(&response.billing_reason)),
+        },
+        token: Zeroizing::new(response.session_token),
+    })
+}
+
+/// Why the owner got a restricted session, worded for the owner, who can fix it.
+fn billing_reason(reason: &str) -> Message {
+    match reason {
+        "subscription_inactive" => err("billing.reasons.subscriptionInactive"),
+        "clinic_limit_exceeded" => err("billing.reasons.clinicLimitExceeded"),
+        "device_limit_exceeded" => err("billing.reasons.deviceLimitExceeded"),
+        _ => server_error("permission_denied", reason),
     }
 }
 
@@ -471,8 +546,10 @@ impl OnlineLogin {
             full_name: self.user.full_name.clone(),
             role,
             is_admin: self.is_admin,
+            is_owner: self.is_owner,
             online: true,
             offline_until: seconds(&self.grant.expires_at),
+            billing: None,
         }
     }
 
@@ -675,8 +752,10 @@ fn login_offline(ctx: &Context, installation: &Installation, username: &str, pas
             full_name: grant.full_name,
             role,
             is_admin: grant.is_admin,
+            is_owner: false,
             online: false,
             offline_until: expires_at,
+            billing: None,
         },
         db,
         key_version: database_key.version,
@@ -723,6 +802,15 @@ pub async fn reconnect_login(ctx: &Context, request: &ReconnectRequest) -> Resul
         }
     };
 
+    if response.billing_only {
+        // The subscription ended while the session was offline: it ends too, and the
+        // owner logs in again to the restricted session.
+        let _ = ctx.api.logout(&response.session_token).await;
+        if let Err(e) = revoke_offline_access(ctx, &installation, &request.username, &response.billing_reason) {
+            eprintln!("Could not revoke offline access: {}", e.key);
+        }
+        return Err(ReconnectError::Revoked(server_error("permission_denied", &response.billing_reason)));
+    }
     let login = open_login_response(ctx, &installation, &client_key, response).map_err(ReconnectError::GiveUp)?;
     if hex::encode(&login.user.id) != request.user_id {
         return Err(ReconnectError::GiveUp(err("auth.errors.invalidGrant")));
@@ -767,6 +855,11 @@ pub async fn finish_reconnect(
 /// Ends a server session nobody uses (a reconnect whose session was closed meanwhile).
 pub async fn discard_login(ctx: &Context, login: OnlineLogin) {
     let _ = ctx.api.logout(&login.token).await;
+}
+
+/// Ends a restricted session on the server.
+pub async fn logout_billing(ctx: &Context, session: BillingSession) {
+    let _ = ctx.api.logout(session.token()).await;
 }
 
 /// Ends the session on the server (if online) and closes the database.
@@ -846,7 +939,8 @@ mod e2e {
                 name: "Test clinic".into(),
                 license_number: unique("E2E-"),
                 phone: "02112345678".into(),
-                city: "Tehran".into(),
+                // Tehran (migration 00011_iran_cities.sql in dental-server).
+                city_id: 341,
                 address: "1 Test Street".into(),
                 postal_code: String::new(),
                 latitude: 35.6892,
@@ -871,22 +965,58 @@ mod e2e {
         setup::setup(&second, &doctor, "Doctor-passw0rd", &existing).await.unwrap();
         assert_eq!(mode(&second).await, ConnectionMode::Online);
 
+        // A new owner has no subscription: a restricted login, only for buying one.
+        let Login::Billing(billing) = login(&online, &doctor, "Doctor-passw0rd", true).await.unwrap() else {
+            panic!("a new owner has no subscription, so the login is billing-only");
+        };
+        assert!(billing.info.is_owner && billing.info.billing.is_some());
+        let status = crate::billing::status(&online, billing.token()).await.unwrap();
+        assert!(status.current.is_none() && status.pending_payment.is_none());
+        assert_eq!(status.clinics.len(), 1);
+        crate::billing::plans(&online, billing.token()).await.unwrap();
+        // No database keys and no offline access came with it.
+        assert_eq!(local_login_status(&online), LocalLogin::NobodyYet);
+        logout_billing(&online, billing).await;
+
+        // Full logins need a subscription in force, sold in the admin panel.
+        let (Ok(owner), Ok(password)) = (std::env::var("DENTAL_E2E_OWNER"), std::env::var("DENTAL_E2E_PASSWORD")) else {
+            eprintln!("Full logins not tested: set DENTAL_E2E_OWNER and DENTAL_E2E_PASSWORD to an owner with a subscription");
+            return;
+        };
+        full_flow(&owner, &password).await;
+    }
+
+    /// Online and offline logins of an owner whose subscription is in force, on a new
+    /// installation of the first of their clinics that has room for one more computer.
+    async fn full_flow(doctor: &str, password: &str) {
+        let online = context("full");
+        let mine = setup::my_clinics(&online, doctor, password).await.unwrap();
+        let clinic = mine.clinics.iter().find(|clinic| clinic.cannot_add.is_none()).expect("a clinic with room");
+        let license_number = clinic.license_number.clone();
+        setup::setup(&online, doctor, password, &setup::SetupTarget::Existing(setup::ExistingClinicInput { license_number }))
+            .await
+            .unwrap();
+        let full = |login: Login| match login {
+            Login::Full(session) => session,
+            Login::Billing(_) => panic!("billing-only login despite the subscription"),
+        };
+
         // First login: already owner, database is created.
-        let session = login(&online, &doctor, "Doctor-passw0rd", true).await.unwrap();
+        let session = full(login(&online, doctor, password, true).await.unwrap());
         assert!(session.info.online && session.info.is_admin);
         assert_eq!(session.info.role, localdb::ROLE_MANAGER);
         assert!(session.info.offline_until > clock::now_unix() + 6 * 24 * 3600);
         assert!(session.reconnect_request().is_none(), "online sessions keep no password");
         // "Is it really you?" works right after an online login, against the vault.
         assert_eq!(verify_password(&online, &session.info, "wrong-password").unwrap_err().key, WRONG_PASSWORD);
-        verify_password(&online, &session.info, "Doctor-passw0rd").unwrap();
+        verify_password(&online, &session.info, password).unwrap();
         logout(&online, session).await;
 
         // Second login rotates the key; the database still opens.
-        let session = login(&online, &doctor, "Doctor-passw0rd", true).await.unwrap();
+        let session = full(login(&online, doctor, password, true).await.unwrap());
         logout(&online, session).await;
 
-        assert!(login(&online, &doctor, "wrong-password", true).await.is_err());
+        assert!(login(&online, doctor, "wrong-password", true).await.is_err());
 
         // Same installation, server unreachable: offline login from the vault.
         let offline = Context::new(online.data_dir.clone(), Api::new("http://127.0.0.1:9"));
@@ -894,12 +1024,12 @@ mod e2e {
         let nothing_here = Context::new(context("empty").data_dir, Api::new("http://127.0.0.1:9"));
         assert_eq!(mode(&nothing_here).await, ConnectionMode::Unavailable);
 
-        let error = login(&offline, &doctor, "wrong-password", false).await.err().unwrap();
+        let error = login(&offline, doctor, "wrong-password", false).await.err().unwrap();
         assert_eq!(error.key, "auth.errors.invalidCredentials");
         let error = login(&offline, "someone-else", "whatever-password", false).await.err().unwrap();
         assert_eq!(error.key, "auth.errors.offlineNotAvailable");
 
-        let mut session = login(&offline, &doctor, "Doctor-passw0rd", false).await.unwrap();
+        let mut session = full(login(&offline, doctor, password, false).await.unwrap());
         assert!(!session.info.online);
         assert_eq!(session.info.role, localdb::ROLE_MANAGER, "role read from the local database");
 
@@ -919,9 +1049,9 @@ mod e2e {
         logout(&online, session).await;
 
         // Keys stay consistent afterwards, online and offline.
-        let session = login(&online, &doctor, "Doctor-passw0rd", true).await.unwrap();
+        let session = full(login(&online, doctor, password, true).await.unwrap());
         logout(&online, session).await;
-        let session = login(&offline, &doctor, "Doctor-passw0rd", false).await.unwrap();
+        let session = full(login(&offline, doctor, password, false).await.unwrap());
         drop(session);
 
         // A damaged database: offline login is refused, with its own screen.
@@ -930,7 +1060,7 @@ mod e2e {
         bytes.truncate(1000);
         std::fs::write(&path, bytes).unwrap();
         assert_eq!(mode(&offline).await, ConnectionMode::LocalDatabaseUnavailable);
-        let error = login(&offline, &doctor, "Doctor-passw0rd", false).await.err().unwrap();
+        let error = login(&offline, doctor, password, false).await.err().unwrap();
         assert_eq!(error.key, "auth.errors.databaseUnavailable");
     }
 
@@ -943,8 +1073,10 @@ mod e2e {
                 full_name: "Dr. A".into(),
                 role: localdb::ROLE_MANAGER.into(),
                 is_admin: true,
+                is_owner: true,
                 online: true,
                 offline_until: 0,
+                billing: None,
             },
             db: Connection::open_in_memory().unwrap(),
             key_version: 1,

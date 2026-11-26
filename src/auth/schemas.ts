@@ -3,6 +3,7 @@ import type { ParseKeys } from "i18next";
 import { MIN_PASSWORD_LENGTH, USERNAME_PATTERN } from "./session";
 import { isValidNationalId, LICENSE_NUMBER_PATTERN, PHONE_PATTERN, POSTAL_CODE_PATTERN } from "./setup";
 import { isRecoveryKeyFormat } from "@/lib/backup";
+import { CARD_LAST4_PATTERN, PAYMENT_REFERENCE_PATTERN } from "@/lib/billing";
 
 /**
  * Form rules. Error messages are translation keys, translated while rendering
@@ -69,7 +70,9 @@ const clinicFields = {
   name: requiredText,
   licenseNumber: z.string().trim().regex(LICENSE_NUMBER_PATTERN, message("setup.validation.licenseNumberFormat")),
   phone,
-  city: requiredText,
+  // Picked from the lists (select values are strings); the province only narrows the cities.
+  provinceId: z.string().min(1, message("setup.validation.provinceRequired")),
+  cityId: z.string().min(1, message("setup.validation.cityRequired")),
   address: requiredText,
   postalCode: z.string().trim().regex(POSTAL_CODE_PATTERN, message("setup.validation.postalCodeFormat")),
   location,
@@ -82,6 +85,25 @@ export const clinicSchema = z.object({ ...clinicFields, nationalId: z.string() }
 export const clinicWithIdentitySchema = z.object({ ...clinicFields, nationalId });
 
 export type ClinicValues = z.infer<typeof clinicWithIdentitySchema>;
+
+// --- Subscription purchase (src/components/purchase-dialog.tsx) -------------
+
+/** A transfer the owner made, as reported. The amount is the quote's, never typed. */
+export const paymentSchema = z
+  .object({
+    mode: z.enum(["extend", "upgradeNow"]),
+    accountId: z.string().min(1, message("billing.validation.accountRequired")),
+    method: z.enum(["cardToCard", "bankTransfer"]),
+    reference: z.string().trim().regex(PAYMENT_REFERENCE_PATTERN, message("billing.validation.referenceFormat")),
+    /** Days before today the money was sent, "0" for today. */
+    daysAgo: z.string(),
+    payerCardLast4: z.string().trim(),
+  })
+  .refine((v) => v.method !== "cardToCard" || CARD_LAST4_PATTERN.test(v.payerCardLast4), {
+    path: ["payerCardLast4"],
+    message: message("billing.validation.cardLast4Format"),
+  });
+export type PaymentValues = z.infer<typeof paymentSchema>;
 
 // --- Database page (src/components/*-database-dialog.tsx) ------------------
 

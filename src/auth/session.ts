@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { RustMessage } from "@/i18n/message";
 import type { PersonIdentityInput } from "./setup";
 
 /** The logged-in user (see SessionInfo in src-tauri/src/auth.rs). */
@@ -9,10 +10,18 @@ export interface Session {
   /** Local role, stored in the clinic database: "manager", "staff", ... */
   role: string;
   isAdmin: boolean;
+  /** Owns the clinic, so can buy its subscription. Only known online: false offline. */
+  isOwner: boolean;
   /** Logged in through the server (true) or offline from this computer (false). */
   online: boolean;
   /** Until when this user can log in without the server (unix seconds). */
   offlineUntil: number;
+  /**
+   * Set for the owner's restricted login: why the clinic cannot be used now (no
+   * subscription in force, or over its limits). Only the subscription page works,
+   * and the clinic's data stays locked (src/lib/billing.ts).
+   */
+  billing: RustMessage | null;
 }
 
 /**

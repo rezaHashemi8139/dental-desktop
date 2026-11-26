@@ -378,8 +378,10 @@ mod tests {
             full_name: "Dr. Owner".into(),
             role: localdb::ROLE_MANAGER.into(),
             is_admin: true,
+            is_owner: true,
             online: true,
             offline_until: 0,
+            billing: None,
         }
     }
 

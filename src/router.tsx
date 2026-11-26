@@ -13,6 +13,7 @@ import { AppLayout } from "@/pages/app-layout";
 import { AuthLayout, CheckingConnection, LoginPage, RegisterPage } from "@/pages/auth-layout";
 import { DatabasePage } from "@/pages/database-page";
 import { HomePage } from "@/pages/home-page";
+import { SubscriptionPage } from "@/pages/subscription-page";
 
 /**
  * Pages. A desktop app has no address bar, so history lives in memory.
@@ -21,7 +22,8 @@ import { HomePage } from "@/pages/home-page";
  * /login       ┐ "auth" layout: only when logged out; checks the server first,
  * /register    ┘ then follows connectivity changes by itself
  * /home        ┐ "app" layout (sidebar): only when logged in; pages read the session with useSession()
- * /database    ┘ backups and clearing the clinic database
+ * /database    │ backups and clearing the clinic database
+ * /subscription┘ the owner's subscription; the only page of a restricted (billing-only) login
  *
  * Pages read their route's data with getRouteApi("<route id>") instead of importing this file.
  */
@@ -80,8 +82,11 @@ const registerRoute = createRoute({
 const appRoute = createRoute({
   getParentRoute: () => rootRoute,
   id: "app",
-  beforeLoad: () => {
-    if (!getSession()) throw redirect({ to: "/login" });
+  beforeLoad: ({ location }) => {
+    const session = getSession();
+    if (!session) throw redirect({ to: "/login" });
+    // The owner's restricted login (no subscription in force): nothing else works.
+    if (session.billing && location.pathname !== "/subscription") throw redirect({ to: "/subscription" });
   },
   component: AppLayout,
 });
@@ -98,10 +103,16 @@ const databaseRoute = createRoute({
   component: DatabasePage,
 });
 
+const subscriptionRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "subscription",
+  component: SubscriptionPage,
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   authRoute.addChildren([loginRoute, registerRoute]),
-  appRoute.addChildren([homeRoute, databaseRoute]),
+  appRoute.addChildren([homeRoute, databaseRoute, subscriptionRoute]),
 ]);
 
 export const router = createRouter({

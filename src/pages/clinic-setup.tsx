@@ -1,17 +1,25 @@
-import { useState } from "react";
-import { Controller, useForm } from "react-hook-form";
+import { useEffect, useState } from "react";
+import { Controller, useForm, useWatch, type Control, type UseFormSetValue } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Building2Icon, CheckIcon, InfoIcon, LoaderCircleIcon, TriangleAlertIcon } from "lucide-react";
+import { Building2Icon, CheckIcon, InfoIcon, LoaderCircleIcon, RefreshCwIcon, TriangleAlertIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { login, type Session } from "@/auth/session";
 import { clinicSchema, clinicWithIdentitySchema, type ClinicValues } from "@/auth/schemas";
-import { setupClinic, type MyClinic, type PendingSetup, type SetupTarget } from "@/auth/setup";
+import {
+  listCities,
+  setupClinic,
+  type MyClinic,
+  type PendingSetup,
+  type Province,
+  type SetupTarget,
+} from "@/auth/setup";
 import { useFormatDate } from "@/i18n/calendar";
 import { toRustMessage, translateMessage, type RustMessage } from "@/i18n/message";
 import { fieldError } from "@/lib/form";
 import { cn } from "@/lib/utils";
 import { FormField } from "@/components/form-field";
 import { LocationPicker } from "@/components/location-picker";
+import { SelectField } from "@/components/select-field";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -232,6 +240,7 @@ function NewClinicForm({ setup, connect, onBack }: NewClinicFormProps) {
     register,
     handleSubmit,
     control,
+    setValue,
     formState: { errors, isSubmitting },
   } = useForm<ClinicValues>({
     // Old accounts without an identity on file give their national ID here.
@@ -240,7 +249,8 @@ function NewClinicForm({ setup, connect, onBack }: NewClinicFormProps) {
       name: "",
       licenseNumber: "",
       phone: "",
-      city: "",
+      provinceId: "",
+      cityId: "",
       address: "",
       postalCode: "",
       location: null,
@@ -251,10 +261,10 @@ function NewClinicForm({ setup, connect, onBack }: NewClinicFormProps) {
   // `values` are already checked and trimmed by the schema; the location is set.
   async function submit(values: ClinicValues) {
     setError(null);
-    const { location, nationalId, ...clinic } = values;
+    const { location, nationalId, provinceId: _province, cityId, ...clinic } = values;
     const target: SetupTarget = {
       kind: "new",
-      clinic: { ...clinic, latitude: location!.latitude, longitude: location!.longitude },
+      clinic: { ...clinic, cityId: Number(cityId), latitude: location!.latitude, longitude: location!.longitude },
       ...(mine.identityOnFile ? {} : { identityType: "national", identity: nationalId }),
     };
     const failed = await connect(target);
@@ -309,13 +319,16 @@ function NewClinicForm({ setup, connect, onBack }: NewClinicFormProps) {
             {...register("phone")}
           />
           <FormField
-            id="clinic-city"
-            label={t("setup.fields.city")}
-            error={fieldError(errors.city)}
-            autoComplete="address-level2"
-            maxLength={100}
-            {...register("city")}
+            id="clinic-postal-code"
+            label={t("setup.fields.postalCode")}
+            error={fieldError(errors.postalCode)}
+            autoComplete="postal-code"
+            inputMode="numeric"
+            maxLength={10}
+            latin
+            {...register("postalCode")}
           />
+          <CityFields control={control} setValue={setValue} />
           <div className="sm:col-span-2">
             <FormField
               id="clinic-address"
@@ -326,16 +339,6 @@ function NewClinicForm({ setup, connect, onBack }: NewClinicFormProps) {
               {...register("address")}
             />
           </div>
-          <FormField
-            id="clinic-postal-code"
-            label={t("setup.fields.postalCode")}
-            error={fieldError(errors.postalCode)}
-            autoComplete="postal-code"
-            inputMode="numeric"
-            maxLength={10}
-            latin
-            {...register("postalCode")}
-          />
           {!mine.identityOnFile && (
             <FormField
               id="clinic-owner-national-id"
@@ -384,5 +387,103 @@ function NewClinicForm({ setup, connect, onBack }: NewClinicFormProps) {
         )}
       </div>
     </form>
+  );
+}
+
+/** Persian names, so Persian alphabetical order whatever the interface language. */
+const nameOrder = new Intl.Collator("fa");
+
+function sortByName(provinces: Province[]): Province[] {
+  return provinces
+    .map((province) => ({ ...province, cities: [...province.cities].sort((a, b) => nameOrder.compare(a.name, b.name)) }))
+    .sort((a, b) => nameOrder.compare(a.name, b.name));
+}
+
+interface CityFieldsProps {
+  control: Control<ClinicValues>;
+  setValue: UseFormSetValue<ClinicValues>;
+}
+
+/**
+ * The clinic's province, then one of its cities, from the server's list (official
+ * Persian names). Different provinces may have cities of the same name.
+ */
+function CityFields({ control, setValue }: CityFieldsProps) {
+  const { t } = useTranslation();
+  const [provinces, setProvinces] = useState<Province[] | null>(null);
+  const [error, setError] = useState<RustMessage | null>(null);
+  // Changes on "retry", which loads the list again.
+  const [attempt, setAttempt] = useState(0);
+  const provinceId = useWatch({ control, name: "provinceId" });
+
+  useEffect(() => {
+    let current = true;
+    setError(null);
+    listCities().then(
+      (list) => current && setProvinces(sortByName(list)),
+      (e) => current && setError(toRustMessage(e)),
+    );
+    return () => {
+      current = false;
+    };
+  }, [attempt]);
+
+  if (error) {
+    return (
+      <div className="flex flex-col gap-2 sm:col-span-2">
+        <Alert variant="destructive">
+          <AlertDescription>{translateMessage(error)}</AlertDescription>
+        </Alert>
+        <Button type="button" variant="outline" onClick={() => setAttempt((n) => n + 1)}>
+          <RefreshCwIcon />
+          {t("auth.connection.retry")}
+        </Button>
+      </div>
+    );
+  }
+
+  const loading = t("setup.placeholders.loading");
+  const cities = provinces?.find((province) => String(province.id) === provinceId)?.cities ?? [];
+  return (
+    <>
+      <Controller
+        control={control}
+        name="provinceId"
+        render={({ field, fieldState }) => (
+          <SelectField
+            id="clinic-province"
+            label={t("setup.fields.province")}
+            placeholder={provinces ? t("setup.placeholders.province") : loading}
+            error={fieldError(fieldState.error)}
+            disabled={!provinces}
+            options={(provinces ?? []).map((province) => ({ value: String(province.id), label: province.name }))}
+            value={field.value}
+            onValueChange={(value) => {
+              field.onChange(value);
+              // The city belongs to the province.
+              setValue("cityId", "");
+            }}
+            triggerRef={field.ref}
+          />
+        )}
+      />
+      <Controller
+        control={control}
+        name="cityId"
+        render={({ field, fieldState }) => (
+          <SelectField
+            id="clinic-city"
+            label={t("setup.fields.city")}
+            placeholder={provinces ? t("setup.placeholders.city") : loading}
+            error={fieldError(fieldState.error)}
+            disabled={!provinceId}
+            options={cities.map((city) => ({ value: String(city.id), label: city.name }))}
+            value={field.value}
+            onValueChange={field.onChange}
+            triggerRef={field.ref}
+          />
+        )}
+      />
+    </>
   );
 }

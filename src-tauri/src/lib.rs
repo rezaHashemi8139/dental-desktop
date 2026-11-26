@@ -1,6 +1,7 @@
 mod api;
 mod auth;
 mod backup;
+mod billing;
 mod clock;
 mod connectivity;
 mod device;
@@ -21,7 +22,7 @@ mod vault;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use auth::{ConnectionMode, Context, ReconnectError, Session, SessionInfo};
+use auth::{BillingSession, ConnectionMode, Context, ReconnectError, Session, SessionInfo};
 use connectivity::{ConnectivityState, ConnectivityStatus, Watcher};
 use message::Message;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -40,6 +41,9 @@ struct AuthState {
     ctx: Context,
     watcher: Arc<Watcher>,
     session: Mutex<Option<Session>>,
+    /// The clinic owner's restricted login (no subscription in force): only the
+    /// subscription calls work. Never set together with `session`.
+    billing: Mutex<Option<BillingSession>>,
     /// Held by login, setup, reconnecting, backups and clearing: they never overlap, since each may
     /// rotate the database key, write the vault or copy the database. A second request while one
     /// runs is refused instead of queued (no duplicate logins).
@@ -108,9 +112,9 @@ async fn install_update(app: AppHandle, state: State<'_, AuthState>) -> Result<(
     let Ok(_busy) = state.busy.try_lock() else {
         return Err(Message::new("auth.errors.busy"));
     };
-    let session = state.session.lock().unwrap().take();
-    if let Some(session) = session {
-        auth::logout(&state.ctx, session).await;
+    let open = state.session.lock().unwrap().is_some() || state.billing.lock().unwrap().is_some();
+    if open {
+        end_sessions(&state).await;
         let _ = app.emit(SESSION_ENDED_EVENT, Message::new("update.loggedOut"));
     }
     state.updates.install(&app).await
@@ -208,6 +212,9 @@ async fn patient_history(
 
 #[tauri::command]
 fn current_session(state: State<'_, AuthState>) -> Option<SessionInfo> {
+    if let Some(billing) = state.billing.lock().unwrap().as_ref() {
+        return Some(billing.info.clone());
+    }
     state.session.lock().unwrap().as_ref().map(|s| s.info.clone())
 }
 
@@ -247,6 +254,12 @@ async fn list_my_clinics(
         return Err(Message::new(update::REQUIRED_ERROR));
     }
     setup::my_clinics(&state.ctx, &username, &password).await
+}
+
+/// Iran's provinces and cities, for a new clinic's city.
+#[tauri::command]
+async fn list_cities(state: State<'_, AuthState>) -> Result<Vec<setup::Province>, Message> {
+    setup::cities(&state.ctx).await
 }
 
 /// First start: connects this computer to one clinic of the account, new or
@@ -300,17 +313,24 @@ async fn login(app: AppHandle, state: State<'_, AuthState>, username: String, pa
         return Err(Message::new(update::REQUIRED_ERROR));
     }
     // A new login replaces the previous one.
-    if let Some(previous) = state.session.lock().unwrap().take() {
-        drop(previous);
-    }
+    end_sessions(&state).await;
 
     // The watcher decides online or offline; a stale "not online" is checked again first.
     let online = state.watcher.status().is_online() || state.watcher.refresh().await.is_online();
-    let session = auth::login(&state.ctx, &username, &password, online).await.inspect_err(|e| {
+    let login = auth::login(&state.ctx, &username, &password, online).await.inspect_err(|e| {
         if e.key == update::REQUIRED_ERROR {
             update_required_by_server(&app, &state);
         }
     })?;
+    let session = match login {
+        auth::Login::Full(session) => session,
+        auth::Login::Billing(billing) => {
+            // Restricted: no database, nothing to sync.
+            let info = billing.info.clone();
+            *state.billing.lock().unwrap() = Some(billing);
+            return Ok(info);
+        }
+    };
     if online && !session.info.online {
         // The server went away since the last check: let everyone know now.
         let watcher = Arc::clone(&state.watcher);
@@ -328,11 +348,72 @@ async fn login(app: AppHandle, state: State<'_, AuthState>, username: String, pa
 /// reconnect that finishes later finds it gone and discards its result.
 #[tauri::command]
 async fn logout(state: State<'_, AuthState>) -> Result<(), Message> {
+    end_sessions(&state).await;
+    Ok(())
+}
+
+/// Ends the open login, full or restricted, on the server too.
+async fn end_sessions(state: &AuthState) {
     let session = state.session.lock().unwrap().take();
     if let Some(session) = session {
         auth::logout(&state.ctx, session).await;
     }
-    Ok(())
+    let billing = state.billing.lock().unwrap().take();
+    if let Some(billing) = billing {
+        auth::logout_billing(&state.ctx, billing).await;
+    }
+}
+
+// --- Subscription (billing.rs) ---------------------------------------------
+
+/// The owner's server token: the restricted session's, or a full online session's.
+fn billing_token(state: &AuthState) -> Result<String, Message> {
+    if let Some(billing) = state.billing.lock().unwrap().as_ref() {
+        return Ok(billing.token().to_owned());
+    }
+    with_session(state, |session| {
+        session.token().map(str::to_owned).ok_or_else(|| Message::new("billing.errors.needsServer"))
+    })
+}
+
+#[tauri::command]
+async fn billing_status(state: State<'_, AuthState>) -> Result<billing::BillingStatus, Message> {
+    let token = Zeroizing::new(billing_token(&state)?);
+    billing::status(&state.ctx, &token).await
+}
+
+#[tauri::command]
+async fn list_plans(state: State<'_, AuthState>) -> Result<Vec<billing::Plan>, Message> {
+    let token = Zeroizing::new(billing_token(&state)?);
+    billing::plans(&state.ctx, &token).await
+}
+
+#[tauri::command]
+async fn quote_payment(
+    state: State<'_, AuthState>,
+    plan_id: String,
+    mode: billing::PurchaseMode,
+) -> Result<billing::Quote, Message> {
+    let token = Zeroizing::new(billing_token(&state)?);
+    billing::quote(&state.ctx, &token, &plan_id, mode).await
+}
+
+#[tauri::command]
+async fn create_payment(state: State<'_, AuthState>, payment: billing::PaymentInput) -> Result<billing::Payment, Message> {
+    let token = Zeroizing::new(billing_token(&state)?);
+    billing::create_payment(&state.ctx, &token, &payment).await
+}
+
+#[tauri::command]
+async fn list_my_payments(state: State<'_, AuthState>) -> Result<Vec<billing::Payment>, Message> {
+    let token = Zeroizing::new(billing_token(&state)?);
+    billing::payments(&state.ctx, &token).await
+}
+
+#[tauri::command]
+async fn cancel_payment(state: State<'_, AuthState>, id: String) -> Result<billing::Payment, Message> {
+    let token = Zeroizing::new(billing_token(&state)?);
+    billing::cancel_payment(&state.ctx, &token, &id).await
 }
 
 /// Runs a database action (export, restore, clear) under Rust's own checks,
@@ -584,6 +665,7 @@ pub fn run() {
                 ctx: Context::new(data_dir, api),
                 watcher: Arc::clone(&watcher),
                 session: Mutex::new(None),
+                billing: Mutex::new(None),
                 busy: tauri::async_runtime::Mutex::new(()),
                 syncer: sync::Syncer::new(),
             });
@@ -610,11 +692,18 @@ pub fn run() {
             check_connectivity,
             connection_status,
             list_my_clinics,
+            list_cities,
             setup_clinic,
             sign_up,
             change_password,
             login,
             logout,
+            billing_status,
+            list_plans,
+            quote_payment,
+            create_payment,
+            list_my_payments,
+            cancel_payment,
             export_database,
             restore_database,
             clear_database,
@@ -643,10 +732,7 @@ pub fn run() {
             // database locked. The window is already gone, so the wait isn't seen.
             if let tauri::RunEvent::Exit = event {
                 if let Some(state) = app.try_state::<AuthState>() {
-                    let session = state.session.lock().unwrap().take();
-                    if let Some(session) = session {
-                        tauri::async_runtime::block_on(auth::logout(&state.ctx, session));
-                    }
+                    tauri::async_runtime::block_on(end_sessions(&state));
                 }
             }
         });

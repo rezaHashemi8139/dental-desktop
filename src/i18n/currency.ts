@@ -202,9 +202,23 @@ function formatNumber(languageCode: string, shown: number, currency: Currency): 
  * `formatMoney(1250000)` → "۱۲۵٬۰۰۰ تومان" with Toman.
  */
 export function useFormatMoney() {
+  const { currency } = useCurrency();
+  return useFormatIn(currency);
+}
+
+/**
+ * Formats amounts that are real Iranian rials whatever the currency setting, e.g.
+ * subscription prices (src/lib/billing.ts): in Toman or Rial as chosen, and in
+ * Rial when another currency is chosen, since there is no exchange rate.
+ */
+export function useFormatRials() {
+  const { currency } = useCurrency();
+  return useFormatIn(currency.id === "IRT" || currency.id === "IRR" ? currency : currencyById("IRR"));
+}
+
+function useFormatIn(currency: Currency) {
   const { t } = useTranslation();
   const { language } = useLanguage();
-  const { currency } = useCurrency();
   return useCallback(
     (stored: number) => {
       const shown = fromStored(stored, currency);

@@ -8,6 +8,7 @@ const VENDOR_PROTO_DIR: &str = "proto-vendor/protovalidate";
 
 const PROTO_FILES: &[&str] = &[
     "dental/v1/auth.proto",
+    "dental/v1/billing.proto",
     "dental/v1/crypto.proto",
     "dental/v1/health.proto",
     "dental/v1/installation.proto",
@@ -15,6 +16,7 @@ const PROTO_FILES: &[&str] = &[
     "dental/v1/member.proto",
     "dental/v1/patient.proto",
     "dental/v1/person.proto",
+    "dental/v1/subscription.proto",
     "dental/v1/sync.proto",
 ];
 

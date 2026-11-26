@@ -134,6 +134,11 @@ impl Api {
         self.call("InstallationService", "ListMyClinics", request, None).await
     }
 
+    /// Iran's provinces and cities, for a new clinic. No session needed.
+    pub async fn list_cities(&self) -> Result<proto::ListCitiesResponse, ApiError> {
+        self.call("InstallationService", "ListCities", &proto::ListCitiesRequest {}, None).await
+    }
+
     pub async fn sign_up(&self, request: &proto::SignUpRequest) -> Result<proto::SignUpResponse, ApiError> {
         self.call("AuthService", "SignUp", request, None).await
     }
@@ -199,6 +204,40 @@ impl Api {
     ) -> Result<proto::GetPatientHistoryResponse, ApiError> {
         let request = proto::GetPatientHistoryRequest { identity: Some(identity) };
         self.call("PatientService", "GetPatientHistory", &request, Some(token)).await
+    }
+
+    // --- Subscriptions (billing.rs): the clinic owner's session, full or billing-only ---
+
+    pub async fn list_plans(&self, token: &str) -> Result<proto::BillingServiceListPlansResponse, ApiError> {
+        self.call("BillingService", "ListPlans", &proto::BillingServiceListPlansRequest {}, Some(token)).await
+    }
+
+    pub async fn billing_status(&self, token: &str) -> Result<proto::GetBillingStatusResponse, ApiError> {
+        self.call("BillingService", "GetBillingStatus", &proto::GetBillingStatusRequest {}, Some(token)).await
+    }
+
+    pub async fn quote_payment(
+        &self,
+        token: &str,
+        request: &proto::QuotePaymentRequest,
+    ) -> Result<proto::QuotePaymentResponse, ApiError> {
+        self.call("BillingService", "QuotePayment", request, Some(token)).await
+    }
+
+    pub async fn create_payment(
+        &self,
+        token: &str,
+        request: &proto::CreatePaymentRequest,
+    ) -> Result<proto::CreatePaymentResponse, ApiError> {
+        self.call("BillingService", "CreatePayment", request, Some(token)).await
+    }
+
+    pub async fn list_my_payments(&self, token: &str) -> Result<proto::ListMyPaymentsResponse, ApiError> {
+        self.call("BillingService", "ListMyPayments", &proto::ListMyPaymentsRequest {}, Some(token)).await
+    }
+
+    pub async fn cancel_payment(&self, token: &str, id: Vec<u8>) -> Result<proto::CancelPaymentResponse, ApiError> {
+        self.call("BillingService", "CancelPayment", &proto::CancelPaymentRequest { id }, Some(token)).await
     }
 
     pub async fn get_language(&self, code: &str) -> Result<proto::GetLanguageResponse, ApiError> {

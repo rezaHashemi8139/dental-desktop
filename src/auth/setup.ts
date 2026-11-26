@@ -19,7 +19,8 @@ export interface ClinicInput {
   /** Unique across all clinics. */
   licenseNumber: string;
   phone: string;
-  city: string;
+  /** A City.id from listCities(); its province comes with it. */
+  cityId: number;
   address: string;
   postalCode: string;
   /** Picked on the map, in WGS 84 degrees. */
@@ -79,7 +80,19 @@ export interface MyClinics {
   ownedClinicCount: number;
 }
 
+/** A province of Iran with its cities (see Province in src-tauri/src/setup.rs). Official Persian names. */
+export interface Province {
+  id: number;
+  name: string;
+  cities: { id: number; name: string }[];
+}
+
 // Each call throws a RustMessage (see src/i18n/message.ts) on failure.
+
+/** Provinces and cities ordered by ID: sort them by name for display. Needs the server. */
+export function listCities(): Promise<Province[]> {
+  return invoke<Province[]>("list_cities");
+}
 
 export function listMyClinics(username: string, password: string): Promise<MyClinics> {
   return invoke<MyClinics>("list_my_clinics", { username, password });
