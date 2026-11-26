@@ -1,0 +1,6 @@
+[build]
+# At most 2 crates compile at once. More parallel rustc processes ran out of
+# Windows commit memory ("The paging file is too small", os error 1455) on a
+# development machine with VS Code, browsers and other tools open. Override for
+# one build with CARGO_BUILD_JOBS (e.g. `$env:CARGO_BUILD_JOBS = "8"`).
+jobs = 2
