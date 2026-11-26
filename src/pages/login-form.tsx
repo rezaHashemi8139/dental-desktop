@@ -3,7 +3,8 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { LoaderCircleIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { login, PASSWORD_CHANGE_REQUIRED, type Session } from "@/auth/session";
+import { PASSWORD_CHANGE_REQUIRED, type Session } from "@/auth/session";
+import { startLogin, type PendingSetup } from "@/auth/setup";
 import { loginSchema, type LoginValues } from "@/auth/schemas";
 import { toRustMessage, translateMessage, type RustMessage } from "@/i18n/message";
 import { fieldError } from "@/lib/form";
@@ -17,6 +18,8 @@ interface LoginFormProps {
   /** Shown until the next attempt, e.g. why the server ended the last session. */
   initialError?: RustMessage | null;
   onLoggedIn: (session: Session) => void;
+  /** First start: this computer is not connected to a clinic yet; the account's clinics are listed. */
+  onSetupRequired: (setup: PendingSetup) => void;
   /** The account still has a temporary password: a new one must be chosen first. */
   onPasswordChangeRequired: (username: string, password: string) => void;
 }
@@ -26,6 +29,7 @@ export function LoginForm({
   notice,
   initialError = null,
   onLoggedIn,
+  onSetupRequired,
   onPasswordChangeRequired,
 }: LoginFormProps) {
   const { t } = useTranslation();
@@ -44,7 +48,9 @@ export function LoginForm({
   async function submit(values: LoginValues) {
     setError(null);
     try {
-      onLoggedIn(await login(values.username, values.password));
+      const result = await startLogin(values.username, values.password);
+      if ("session" in result) onLoggedIn(result.session);
+      else onSetupRequired(result.setup);
     } catch (e) {
       const message = toRustMessage(e);
       if (message.key === PASSWORD_CHANGE_REQUIRED) {

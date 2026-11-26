@@ -18,8 +18,8 @@ export interface Session {
 /**
  * What the login screen can offer (see ConnectionMode in src-tauri/src/auth.rs):
  * - "online": the server is reachable; login and sign-up go through it.
- * - "setup": the server is reachable but this computer was never set up: the clinic
- *   and its owner must be registered first (src/auth/setup.ts).
+ * - "setup": the server is reachable but this computer is not connected to a clinic yet:
+ *   login and sign-up work, and logging in leads to picking or adding the clinic (src/auth/setup.ts).
  * - "offline": no server, but the local database is usable and users have logged in here before: login only.
  * - "localDatabaseUnavailable": no server, and the local database (or the vault with its keys) is
  *   missing, damaged or unreadable: no offline login.

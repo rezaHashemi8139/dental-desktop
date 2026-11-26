@@ -1,12 +1,19 @@
 import { invoke } from "@tauri-apps/api/core";
+import { isRustMessage, type RustMessage } from "@/i18n/message";
+import { login, type Session } from "./session";
 
 /**
- * First start: the clinic and its owner are registered together with this
- * computer (see src-tauri/src/setup.rs). Until then the login screen shows the
- * setup form (ConnectionMode "setup").
+ * First start: this computer is connected to exactly one clinic, for good (see
+ * src-tauri/src/setup.rs). Until then logging in is refused with
+ * SETUP_REQUIRED; the login screen then lists the account's clinics, and the
+ * person picks the one this computer belongs to or adds a new one, then is
+ * logged in with the same credentials.
  */
 
-/** See ClinicInput in src-tauri/src/setup.rs. */
+/** The error of a login on a computer not connected to a clinic yet. */
+export const SETUP_REQUIRED = "setup.errors.required";
+
+/** A new clinic (see ClinicInput in src-tauri/src/setup.rs). */
 export interface ClinicInput {
   name: string;
   /** Unique across all clinics. */
@@ -15,6 +22,9 @@ export interface ClinicInput {
   city: string;
   address: string;
   postalCode: string;
+  /** Picked on the map, in WGS 84 degrees. */
+  latitude: number;
+  longitude: number;
 }
 
 /**
@@ -28,15 +38,81 @@ export interface PersonIdentityInput {
   nationality?: string;
 }
 
-/** Who is responsible for the clinic: a new account, or an existing one proven with its password. */
-export type OwnerInput =
-  | ({ kind: "new"; username: string; password: string; fullName: string; phone: string } & PersonIdentityInput)
-  | ({ kind: "existing"; username: string; password: string } & PersonIdentityInput);
+/**
+ * The clinic this computer is connected to (see SetupTarget in src-tauri/src/setup.rs):
+ * a new one, owned by the person setting up, or one they already own.
+ * A new clinic needs an identity only when the account has none on file
+ * (MyClinics.identityOnFile).
+ */
+export type SetupTarget =
+  | ({ kind: "new"; clinic: ClinicInput } & Partial<PersonIdentityInput>)
+  | { kind: "existing"; licenseNumber: string };
 
-/** Returns the owner's username, as the server spells it. Throws a RustMessage on failure. */
-export function setupClinic(clinic: ClinicInput, owner: OwnerInput): Promise<string> {
-  return invoke<string>("setup_clinic", { clinic, owner });
+/** A clinic the account owns or administers (see MyClinic in src-tauri/src/setup.rs). */
+export interface MyClinic {
+  /** Identifies the clinic in SetupTarget "existing". */
+  licenseNumber: string;
+  name: string;
+  city: string;
+  address: string;
+  isOwner: boolean;
+  ownerFullName: string;
+  /** Computers already connected, and how many the owner's subscription allows (0 if none). */
+  installationCount: number;
+  maxInstallations: number;
+  /** Unix seconds; 0 if the owner has no subscription in force. */
+  subscriptionEndsAt: number;
+  /** Why this computer cannot be connected to the clinic; null if it can. */
+  cannotAdd: RustMessage | null;
 }
+
+/** The account's clinics (see MyClinics in src-tauri/src/setup.rs). */
+export interface MyClinics {
+  fullName: string;
+  /** False only for old accounts: adding a clinic then needs their national ID. */
+  identityOnFile: boolean;
+  /** Owned ones first, then oldest first. */
+  clinics: MyClinic[];
+  /** The account's own subscription: unix seconds, 0 if none is in force. */
+  subscriptionEndsAt: number;
+  maxClinics: number;
+  ownedClinicCount: number;
+}
+
+// Each call throws a RustMessage (see src/i18n/message.ts) on failure.
+
+export function listMyClinics(username: string, password: string): Promise<MyClinics> {
+  return invoke<MyClinics>("list_my_clinics", { username, password });
+}
+
+/** Connects this computer to `target`. Does not log in. */
+export function setupClinic(username: string, password: string, target: SetupTarget): Promise<void> {
+  return invoke("setup_clinic", { username, password, target });
+}
+
+/** The credentials of a login that must pick or add the clinic first, with the account's clinics. */
+export interface PendingSetup {
+  username: string;
+  password: string;
+  clinics: MyClinics;
+}
+
+/**
+ * Logs in; on a computer not connected to a clinic yet, returns the account's
+ * clinics instead (proven with the same password). Throws a RustMessage.
+ */
+export async function startLogin(
+  username: string,
+  password: string,
+): Promise<{ session: Session } | { setup: PendingSetup }> {
+  try {
+    return { session: await login(username, password) };
+  } catch (e) {
+    if (!isRustMessage(e) || e.key !== SETUP_REQUIRED) throw e;
+  }
+  return { setup: { username, password, clinics: await listMyClinics(username, password) } };
+}
+
 
 // Same rules as the server (dental-server/proto/dental/v1/installation.proto).
 export const LICENSE_NUMBER_PATTERN = /^[A-Za-z0-9./-]{3,32}$/;

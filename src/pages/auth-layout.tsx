@@ -1,9 +1,10 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { getRouteApi, Navigate, Outlet, useLocation, useNavigate, useRouter } from "@tanstack/react-router";
 import { CloudOffIcon, DatabaseIcon, InfoIcon, LoaderCircleIcon, RefreshCwIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useConnectivity } from "@/auth/connectivity";
 import { connectionStatus, type ConnectionMode, type Session } from "@/auth/session";
+import type { PendingSetup } from "@/auth/setup";
 import { getEndedMessage, getEndedNotice, setSession } from "@/auth/store";
 import type { RustMessage } from "@/i18n/message";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -13,15 +14,28 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { PageArea } from "@/pages/root-layout";
 import { ChangePasswordForm } from "./change-password-form";
+import { ClinicSetup } from "./clinic-setup";
 import { LoginForm } from "./login-form";
 import { RegisterForm } from "./register-form";
-import { SetupForm } from "./setup-form";
 
 const authRoute = getRouteApi("/auth");
 const loginRoute = getRouteApi("/auth/login");
 
 /** The login screen's current mode, for the pages inside it. */
 const ModeContext = createContext<ConnectionMode>("online");
+
+/** The login form as the clinic step left it: its username, and why logging in failed. */
+interface BackFromSetup {
+  username: string;
+  error?: RustMessage;
+}
+
+/** Lets the login form hand over to the clinic step (first start), and come back from it. */
+const SetupContext = createContext<{
+  start: (setup: PendingSetup) => void;
+  back: BackFromSetup | null;
+  clearBack: () => void;
+}>({ start: () => {}, back: null, clearBack: () => {} });
 
 /** Shown while the server is being checked. */
 export function CheckingConnection() {
@@ -40,7 +54,7 @@ export function CheckingConnection() {
  * The mode from the route loader (startup, logout, "retry", setup done), then
  * kept up to date as connectivity changes: losing the server switches to offline
  * login, getting it back switches to online, without reloading the page. The
- * setup form is never left by itself, so nothing typed into it is lost.
+ * "setup" mode is never left by itself: offline login is impossible there anyway.
  */
 function useLiveMode(): ConnectionMode {
   const loaded = authRoute.useLoaderData();
@@ -84,30 +98,31 @@ function AuthScreen() {
   const navigate = useNavigate();
   const router = useRouter();
 
-  if (mode === "setup") {
-    // Then the owner logs in; checking the server again switches to the login screen.
-    async function onSetupDone(username: string) {
-      await navigate({ to: "/login", search: { registered: username, setup: true }, replace: true });
-      await router.invalidate();
-    }
+  // First start, after logging in: the clinic this computer joins, in place of the login card.
+  const [pending, setPending] = useState<PendingSetup | null>(null);
+  const [back, setBack] = useState<BackFromSetup | null>(null);
+  const clearBack = useCallback(() => setBack(null), []);
 
+  if (pending) {
     return (
       <Card className="w-full max-w-2xl">
-        <CardHeader>
-          <CardTitle>{t("setup.title")}</CardTitle>
-          <CardDescription>{t("setup.description")}</CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-6">
-          <Alert variant="info">
-            <InfoIcon />
-            <AlertTitle>{t("setup.firstRun.title")}</AlertTitle>
-            <AlertDescription>
-              <p>{t("setup.firstRun.subscription")}</p>
-              <p>{t("setup.firstRun.backup")}</p>
-            </AlertDescription>
-          </Alert>
-          <SetupForm onDone={onSetupDone} />
-        </CardContent>
+        <ClinicSetup
+          setup={pending}
+          onLoggedIn={(session) => {
+            setSession(session);
+            navigate({ to: "/home", replace: true });
+          }}
+          onCancel={() => {
+            setBack({ username: pending.username });
+            setPending(null);
+          }}
+          onLoginFailed={(error) => {
+            setBack({ username: pending.username, error });
+            setPending(null);
+            // The computer is connected now: checking the server again leaves "setup".
+            router.invalidate();
+          }}
+        />
       </Card>
     );
   }
@@ -137,32 +152,46 @@ function AuthScreen() {
   // switch between them keeps what was typed.
   const offline = mode === "offline";
   const register = !offline && tab === "register";
+  const setupSteps = { start: setPending, back, clearBack };
   return (
     <ModeContext.Provider value={mode}>
-      <Card className="w-full max-w-sm">
-        <CardHeader>
-          <CardTitle>{t(register ? "auth.register.title" : "auth.login.title")}</CardTitle>
-          <CardDescription>{t(register ? "auth.register.description" : "auth.login.description")}</CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-4">
-          {offline ? (
-            // No server: sign-up is impossible, only users who logged in here before can log in.
-            <Alert>
-              <CloudOffIcon />
-              <AlertDescription>{t("auth.connection.offline")}</AlertDescription>
-            </Alert>
-          ) : (
-            <Tabs value={tab} onValueChange={(value) => navigate({ to: value === "register" ? "/register" : "/login" })}>
-              <TabsList className="w-full">
-                <TabsTrigger value="login">{t("auth.tabs.login")}</TabsTrigger>
-                <TabsTrigger value="register">{t("auth.tabs.register")}</TabsTrigger>
-              </TabsList>
-            </Tabs>
-          )}
-          <Outlet />
-          {offline && <RetryButton />}
-        </CardContent>
-      </Card>
+      <SetupContext.Provider value={setupSteps}>
+        <Card className="w-full max-w-sm">
+          <CardHeader>
+            <CardTitle>{t(register ? "auth.register.title" : "auth.login.title")}</CardTitle>
+            <CardDescription>{t(register ? "auth.register.description" : "auth.login.description")}</CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4">
+            {mode === "setup" && (
+              // First start: logging in (after signing up, for a new account) leads to the clinic step.
+              <Alert variant="info">
+                <InfoIcon />
+                <AlertTitle>{t("setup.title")}</AlertTitle>
+                <AlertDescription>{t("setup.notConnected")}</AlertDescription>
+              </Alert>
+            )}
+            {offline ? (
+              // No server: sign-up is impossible, only users who logged in here before can log in.
+              <Alert>
+                <CloudOffIcon />
+                <AlertDescription>{t("auth.connection.offline")}</AlertDescription>
+              </Alert>
+            ) : (
+              <Tabs
+                value={tab}
+                onValueChange={(value) => navigate({ to: value === "register" ? "/register" : "/login" })}
+              >
+                <TabsList className="w-full">
+                  <TabsTrigger value="login">{t("auth.tabs.login")}</TabsTrigger>
+                  <TabsTrigger value="register">{t("auth.tabs.register")}</TabsTrigger>
+                </TabsList>
+              </Tabs>
+            )}
+            <Outlet />
+            {offline && <RetryButton />}
+          </CardContent>
+        </Card>
+      </SetupContext.Provider>
     </ModeContext.Provider>
   );
 }
@@ -204,18 +233,22 @@ function RetryButton() {
 
 export function LoginPage() {
   const { t } = useTranslation();
-  const { registered, setup } = loginRoute.useSearch();
+  const { registered } = loginRoute.useSearch();
   const navigate = useNavigate();
+  const setupSteps = useContext(SetupContext);
   // Why the last session ended by itself, if it did (src/auth/store.ts).
   const [ended] = useState(getEndedMessage);
   // Why the app itself logged out last, if it did (database cleared).
   const [endedNotice] = useState(getEndedNotice);
   // A login refused for a temporary password: its credentials, while a new one is chosen.
   const [temporary, setTemporary] = useState<{ username: string; password: string } | null>(null);
-  // Back from choosing a new password: the login form starts again with this.
+  // Back from choosing a new password, or from the clinic step: the login form starts again with this.
   const [afterChange, setAfterChange] = useState<{ username: string; changed: boolean; error?: RustMessage } | null>(
-    null,
+    () => setupSteps.back && { ...setupSteps.back, changed: false },
   );
+  // Taken over above; not shown again on the next visit to this form.
+  const { clearBack } = setupSteps;
+  useEffect(clearBack, [clearBack]);
 
   function onLoggedIn(session: Session) {
     setSession(session);
@@ -228,6 +261,7 @@ export function LoginPage() {
         username={temporary.username}
         currentPassword={temporary.password}
         onLoggedIn={onLoggedIn}
+        onSetupRequired={setupSteps.start}
         onBack={(changed, error) => {
           setAfterChange({ username: temporary.username, changed, error });
           setTemporary(null);
@@ -244,6 +278,7 @@ export function LoginPage() {
         notice={afterChange.changed ? t("auth.changePassword.changed") : null}
         initialError={afterChange.error ?? null}
         onLoggedIn={onLoggedIn}
+        onSetupRequired={setupSteps.start}
         onPasswordChangeRequired={(username, password) => setTemporary({ username, password })}
       />
     );
@@ -251,12 +286,13 @@ export function LoginPage() {
 
   return (
     <LoginForm
-      // A new form (with the new username) after each sign-up or setup.
+      // A new form (with the new username) after each sign-up.
       key={registered ?? ""}
       initialUsername={registered ?? ""}
-      notice={registered ? t(setup ? "setup.success" : "auth.signUpSuccess") : endedNotice && t(endedNotice)}
+      notice={registered ? t("auth.signUpSuccess") : endedNotice && t(endedNotice)}
       initialError={ended}
       onLoggedIn={onLoggedIn}
+      onSetupRequired={setupSteps.start}
       onPasswordChangeRequired={(username, password) => setTemporary({ username, password })}
     />
   );
@@ -267,7 +303,7 @@ export function RegisterPage() {
   const navigate = useNavigate();
 
   // Sign-up needs the server.
-  if (mode !== "online") return <Navigate to="/login" replace />;
+  if (mode !== "online" && mode !== "setup") return <Navigate to="/login" replace />;
 
   return <RegisterForm onRegistered={(username) => navigate({ to: "/login", search: { registered: username } })} />;
 }

@@ -63,11 +63,9 @@ const authRoute = createRoute({
 const loginRoute = createRoute({
   getParentRoute: () => authRoute,
   path: "login",
-  // ?registered=<username> after a successful sign-up, plus &setup=true after the clinic setup.
-  validateSearch: (search: Record<string, unknown>): { registered?: string; setup?: true } => {
-    if (typeof search.registered !== "string") return {};
-    return search.setup === true ? { registered: search.registered, setup: true } : { registered: search.registered };
-  },
+  // ?registered=<username> after a successful sign-up.
+  validateSearch: (search: Record<string, unknown>): { registered?: string } =>
+    typeof search.registered === "string" ? { registered: search.registered } : {},
   component: LoginPage,
 });
 

@@ -56,46 +56,32 @@ export const changePasswordSchema = z
   .refine(passwordsMatch, passwordMismatch);
 export type ChangePasswordValues = z.infer<typeof changePasswordSchema>;
 
-// --- First-start setup (src/pages/setup-form.tsx) ---------------------------
+// --- First start: the clinic this computer joins (src/pages/clinic-setup.tsx) ---
 
-/** Fields of the setup form whatever kind of owner is chosen. */
-const setupFields = {
-  clinicName: requiredText,
+/** A point picked on the map; null until one is picked. */
+const location = z
+  .object({ latitude: z.number(), longitude: z.number() })
+  .nullable()
+  // The server takes 0, 0 for "never set".
+  .refine((v) => v !== null && (v.latitude !== 0 || v.longitude !== 0), message("setup.validation.locationRequired"));
+
+const clinicFields = {
+  name: requiredText,
   licenseNumber: z.string().trim().regex(LICENSE_NUMBER_PATTERN, message("setup.validation.licenseNumberFormat")),
-  clinicPhone: phone,
+  phone,
   city: requiredText,
   address: requiredText,
   postalCode: z.string().trim().regex(POSTAL_CODE_PATTERN, message("setup.validation.postalCodeFormat")),
-  ownerKind: z.enum(["new", "existing"]),
-  nationalId,
+  location,
 };
 
-/**
- * Both schemas have the same fields, so the form keeps one set of values and
- * picks the schema by `ownerKind`. A new owner gets the sign-up rules.
- */
-export const newOwnerSetupSchema = z
-  .object({
-    ...setupFields,
-    fullName: requiredText,
-    ownerPhone: phone,
-    username,
-    password: newPassword,
-    confirmPassword: z.string(),
-  })
-  .refine(passwordsMatch, passwordMismatch);
+/** A new clinic, for an account with an identity on file. */
+export const clinicSchema = z.object({ ...clinicFields, nationalId: z.string() });
 
-/** An existing owner only proves the account, like login. */
-export const existingOwnerSetupSchema = z.object({
-  ...setupFields,
-  // Only used for a new account.
-  fullName: z.string(),
-  ownerPhone: z.string(),
-  confirmPassword: z.string(),
-  username: required,
-  password: required,
-});
-export type SetupValues = z.infer<typeof newOwnerSetupSchema>;
+/** A new clinic, for an old account without an identity on file: it is saved with the clinic. */
+export const clinicWithIdentitySchema = z.object({ ...clinicFields, nationalId });
+
+export type ClinicValues = z.infer<typeof clinicWithIdentitySchema>;
 
 // --- Database page (src/components/*-database-dialog.tsx) ------------------
 

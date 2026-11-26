@@ -234,18 +234,38 @@ async fn connection_status(state: State<'_, AuthState>, refresh: bool) -> Result
     Ok(auth::connection_mode(&state.ctx, &status))
 }
 
-/// First start: registers this computer with its clinic and the clinic's owner.
-/// Returns the owner's username for the login form.
+/// First start, after a login refused with "setup.errors.required": the clinics
+/// the account owns or administers, to pick the one this computer belongs to.
+#[tauri::command]
+async fn list_my_clinics(
+    state: State<'_, AuthState>,
+    username: String,
+    password: String,
+) -> Result<setup::MyClinics, Message> {
+    let password = Zeroizing::new(password);
+    if state.updates.is_required() {
+        return Err(Message::new(update::REQUIRED_ERROR));
+    }
+    setup::my_clinics(&state.ctx, &username, &password).await
+}
+
+/// First start: connects this computer to one clinic of the account, new or
+/// existing, for good. The frontend then logs in with the same credentials.
 #[tauri::command]
 async fn setup_clinic(
     state: State<'_, AuthState>,
-    clinic: setup::ClinicInput,
-    owner: setup::OwnerInput,
-) -> Result<String, Message> {
+    username: String,
+    password: String,
+    target: setup::SetupTarget,
+) -> Result<(), Message> {
+    let password = Zeroizing::new(password);
     let Ok(_busy) = state.busy.try_lock() else {
         return Err(Message::new("auth.errors.busy"));
     };
-    setup::setup(&state.ctx, &clinic, &owner).await
+    if state.updates.is_required() {
+        return Err(Message::new(update::REQUIRED_ERROR));
+    }
+    setup::setup(&state.ctx, &username, &password, &target).await
 }
 
 /// Replaces a temporary password (or any password, proven with the current one).
@@ -589,6 +609,7 @@ pub fn run() {
             connectivity_status,
             check_connectivity,
             connection_status,
+            list_my_clinics,
             setup_clinic,
             sign_up,
             change_password,

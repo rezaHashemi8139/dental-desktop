@@ -126,6 +126,14 @@ impl Api {
         self.call("InstallationService", "Register", request, None).await
     }
 
+    /// The clinics an account owns or administers. No session: proven with the password.
+    pub async fn list_my_clinics(
+        &self,
+        request: &proto::ListMyClinicsRequest,
+    ) -> Result<proto::ListMyClinicsResponse, ApiError> {
+        self.call("InstallationService", "ListMyClinics", request, None).await
+    }
+
     pub async fn sign_up(&self, request: &proto::SignUpRequest) -> Result<proto::SignUpResponse, ApiError> {
         self.call("AuthService", "SignUp", request, None).await
     }

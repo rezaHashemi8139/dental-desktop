@@ -3,7 +3,8 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { KeyRoundIcon, LoaderCircleIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { changePassword, login, type Session } from "@/auth/session";
+import { changePassword, type Session } from "@/auth/session";
+import { startLogin, type PendingSetup } from "@/auth/setup";
 import { changePasswordSchema, type ChangePasswordValues } from "@/auth/schemas";
 import { toRustMessage, translateMessage, type RustMessage } from "@/i18n/message";
 import { fieldError } from "@/lib/form";
@@ -16,6 +17,8 @@ interface ChangePasswordFormProps {
   /** The temporary password, as just typed at login. Kept only while this form is shown. */
   currentPassword: string;
   onLoggedIn: (session: Session) => void;
+  /** First start: this computer is not connected to a clinic yet; the account's clinics are listed. */
+  onSetupRequired: (setup: PendingSetup) => void;
   /**
    * Back to the login form: `changed` once the new password is saved (the login
    * with it may still fail, e.g. no subscription), with that login's error if any.
@@ -28,7 +31,13 @@ interface ChangePasswordFormProps {
  * password (created by a clinic admin): the user chooses their own, then is
  * logged in with it.
  */
-export function ChangePasswordForm({ username, currentPassword, onLoggedIn, onBack }: ChangePasswordFormProps) {
+export function ChangePasswordForm({
+  username,
+  currentPassword,
+  onLoggedIn,
+  onSetupRequired,
+  onBack,
+}: ChangePasswordFormProps) {
   const { t } = useTranslation();
   const [error, setError] = useState<RustMessage | null>(null);
   const {
@@ -53,7 +62,9 @@ export function ChangePasswordForm({ username, currentPassword, onLoggedIn, onBa
       return;
     }
     try {
-      onLoggedIn(await login(username, values.password));
+      const result = await startLogin(username, values.password);
+      if ("session" in result) onLoggedIn(result.session);
+      else onSetupRequired(result.setup);
     } catch (e) {
       // Saved, but logging in failed: the login form says why, and takes the new password.
       onBack(true, toRustMessage(e));

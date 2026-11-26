@@ -202,6 +202,9 @@ pub(crate) fn server_error(code: &str, reason: &str) -> Message {
         "identity_taken" => err("person.errors.identityTaken"),
         "invalid_national_id" => err("person.errors.invalidNationalId"),
         "identity_mismatch" => err("person.errors.identityMismatch"),
+        "identity_required" => err("setup.errors.identityRequired"),
+        "clinic_not_found" => err("setup.errors.clinicNotFound"),
+        "not_clinic_owner" => err("setup.errors.notClinicOwner"),
         "no_clinic" => err("auth.errors.noClinic"),
         PASSWORD_CHANGE_REQUIRED => err(PASSWORD_CHANGE_REQUIRED_ERROR),
         "password_unchanged" => err("auth.errors.passwordUnchanged"),
@@ -257,8 +260,8 @@ pub struct SignUpInput {
 pub enum ConnectionMode {
     /// The server is reachable: login and sign-up go through it.
     Online,
-    /// The server is reachable but this installation was never registered:
-    /// the clinic and its owner must be set up first (setup.rs).
+    /// The server is reachable but this installation is not connected to a clinic yet:
+    /// login and sign-up work, and logging in leads to picking or adding the clinic (setup.rs).
     Setup,
     /// No server, but the local database is usable and users can log in offline: login only.
     Offline,
@@ -358,7 +361,8 @@ pub async fn login(ctx: &Context, username: &str, password: &str, online: bool) 
         return Err(err("auth.errors.invalidCredentials"));
     }
 
-    // Registered by the setup screen (setup.rs) before anyone can log in.
+    // Connected to a clinic (setup.rs) before anyone can log in. The login screen
+    // recognizes this error and lists the account's clinics instead.
     let installation = Installation::load(&ctx.data_dir)
         .map_err(internal)?
         .ok_or_else(|| err("setup.errors.required"))?;
@@ -820,16 +824,8 @@ mod e2e {
         let error = login(&online, &doctor, "Doctor-passw0rd", true).await.err().unwrap();
         assert_eq!(error.key, "setup.errors.required");
 
-        // Setup registers the clinic with a new owner account.
-        let clinic = setup::ClinicInput {
-            name: "Test clinic".into(),
-            license_number: unique("E2E-"),
-            phone: "02112345678".into(),
-            city: "Tehran".into(),
-            address: "1 Test Street".into(),
-            postal_code: String::new(),
-        };
-        let owner = setup::OwnerInput::New(setup::NewOwnerInput {
+        // The doctor signs up; with no clinic yet, they add theirs and this computer joins it.
+        let account = SignUpInput {
             username: doctor.clone(),
             password: "Doctor-passw0rd".into(),
             full_name: "Dr. Test".into(),
@@ -837,11 +833,43 @@ mod e2e {
             identity: national_id(clock::now_unix() as u64),
             nationality: String::new(),
             phone: "09121234567".into(),
+        };
+        sign_up(&online, &account).await.unwrap();
+        let error = setup::my_clinics(&online, &doctor, "wrong-password").await.err().unwrap();
+        assert_eq!(error.key, "auth.errors.invalidCredentials");
+        let mine = setup::my_clinics(&online, &doctor, "Doctor-passw0rd").await.unwrap();
+        assert!(mine.clinics.is_empty() && mine.identity_on_file);
+        assert_eq!(mine.full_name, "Dr. Test");
+
+        let target = setup::SetupTarget::New(setup::NewClinicInput {
+            clinic: setup::ClinicInput {
+                name: "Test clinic".into(),
+                license_number: unique("E2E-"),
+                phone: "02112345678".into(),
+                city: "Tehran".into(),
+                address: "1 Test Street".into(),
+                postal_code: String::new(),
+                latitude: 35.6892,
+                longitude: 51.389,
+            },
+            identity_type: Identity::National,
+            identity: String::new(),
+            nationality: String::new(),
         });
-        assert_eq!(setup::setup(&online, &clinic, &owner).await.unwrap(), doctor);
+        setup::setup(&online, &doctor, "Doctor-passw0rd", &target).await.unwrap();
         assert_eq!(mode(&online).await, ConnectionMode::Online);
-        let error = setup::setup(&online, &clinic, &owner).await.err().unwrap();
+        let error = setup::setup(&online, &doctor, "Doctor-passw0rd", &target).await.err().unwrap();
         assert_eq!(error.key, "setup.errors.alreadyDone");
+
+        // A second computer: the clinic is listed and can be picked.
+        let second = context("second");
+        let mine = setup::my_clinics(&second, &doctor, "Doctor-passw0rd").await.unwrap();
+        assert_eq!(mine.clinics.len(), 1);
+        assert!(mine.clinics[0].is_owner);
+        let license_number = mine.clinics[0].license_number.clone();
+        let existing = setup::SetupTarget::Existing(setup::ExistingClinicInput { license_number });
+        setup::setup(&second, &doctor, "Doctor-passw0rd", &existing).await.unwrap();
+        assert_eq!(mode(&second).await, ConnectionMode::Online);
 
         // First login: already owner, database is created.
         let session = login(&online, &doctor, "Doctor-passw0rd", true).await.unwrap();
