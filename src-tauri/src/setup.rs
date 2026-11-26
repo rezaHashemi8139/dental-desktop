@@ -207,9 +207,24 @@ pub async fn my_clinics(ctx: &Context, username: &str, password: &str) -> Result
     })
 }
 
+/// A free plan the server started by itself when the owner registered their first clinic.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FreeTrial {
+    pub plan_name: String,
+    /// Unix seconds.
+    pub ends_at: i64,
+}
+
 /// Registers this installation with the clinic `target`, proven with the account's
-/// password. Does not log in.
-pub async fn setup(ctx: &Context, username: &str, password: &str, target: &SetupTarget) -> Result<(), Message> {
+/// password. Does not log in. Returns the free trial if registering a first clinic
+/// started one; the owner can then log in to the full clinic at once.
+pub async fn setup(
+    ctx: &Context,
+    username: &str,
+    password: &str,
+    target: &SetupTarget,
+) -> Result<Option<FreeTrial>, Message> {
     if !needed(ctx) {
         return Err(Message::new("setup.errors.alreadyDone"));
     }
@@ -246,5 +261,10 @@ pub async fn setup(ctx: &Context, username: &str, password: &str, target: &Setup
         .try_into()
         .map_err(|_| Message::error("errors.unknown", "invalid installation id"))?;
     let installation = Installation { id, secret: Zeroizing::new(response.installation_secret) };
-    installation.save(&ctx.data_dir).map_err(|e| Message::error("errors.unknown", e))
+    installation.save(&ctx.data_dir).map_err(|e| Message::error("errors.unknown", e))?;
+
+    Ok(response.free_subscription.map(|subscription| FreeTrial {
+        plan_name: subscription.plan_name,
+        ends_at: seconds(&subscription.ends_at),
+    }))
 }

@@ -42,11 +42,18 @@ pub struct Plan {
     pub max_clinics: u32,
     pub max_devices_per_clinic: u32,
     pub duration_days: u32,
+    /// 0 is free: activated at once, without a transfer.
     pub price_rials: i64,
+    /// How many times each owner may buy it; 0 = no limit (e.g. 1 for a free trial).
+    pub max_purchases_per_owner: u32,
+    /// How many times this owner already has (subscriptions not canceled, plus a
+    /// payment waiting for review). Only counted for plans with a limit.
+    pub purchased: u32,
 }
 
-impl From<proto::Plan> for Plan {
-    fn from(plan: proto::Plan) -> Self {
+impl Plan {
+    fn from_proto(plan: proto::Plan, purchases: &[proto::PlanPurchases]) -> Self {
+        let purchased = purchases.iter().find(|p| p.plan_id == plan.id).map_or(0, |p| p.count);
         Self {
             id: hex::encode(plan.id),
             name: plan.name,
@@ -54,6 +61,8 @@ impl From<proto::Plan> for Plan {
             max_devices_per_clinic: plan.max_devices_per_clinic,
             duration_days: plan.duration_days,
             price_rials: plan.price_rials,
+            max_purchases_per_owner: plan.max_purchases_per_owner,
+            purchased,
         }
     }
 }
@@ -120,6 +129,8 @@ pub enum PurchaseMode {
 pub enum PaymentMethod {
     CardToCard,
     BankTransfer,
+    /// Nothing to pay (a free plan, or an upgrade the credit covers): approved at once.
+    Free,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -152,12 +163,14 @@ impl PaymentMethod {
         match self {
             PaymentMethod::CardToCard => proto::PaymentMethod::CardToCard as i32,
             PaymentMethod::BankTransfer => proto::PaymentMethod::BankTransfer as i32,
+            PaymentMethod::Free => proto::PaymentMethod::Free as i32,
         }
     }
 
     fn from_proto(value: i32) -> Self {
         match proto::PaymentMethod::try_from(value) {
             Ok(proto::PaymentMethod::BankTransfer) => PaymentMethod::BankTransfer,
+            Ok(proto::PaymentMethod::Free) => PaymentMethod::Free,
             _ => PaymentMethod::CardToCard,
         }
     }
@@ -279,7 +292,8 @@ pub async fn status(ctx: &Context, token: &str) -> Result<BillingStatus, Message
 /// Plans for sale, cheapest first.
 pub async fn plans(ctx: &Context, token: &str) -> Result<Vec<Plan>, Message> {
     let response = ctx.api.list_plans(token).await.map_err(api_error)?;
-    Ok(response.plans.into_iter().map(Plan::from).collect())
+    let purchases = response.purchases;
+    Ok(response.plans.into_iter().map(|plan| Plan::from_proto(plan, &purchases)).collect())
 }
 
 /// What buying `plan_id` costs and the period it buys, if approved now.
@@ -307,38 +321,47 @@ pub async fn quote(ctx: &Context, token: &str, plan_id: &str, mode: PurchaseMode
     })
 }
 
-/// A transfer the owner made, as typed in the purchase form (src/lib/billing.ts).
+/// A purchase, as typed in the purchase form (src/lib/billing.ts): a transfer the
+/// owner made, or nothing to pay (`PaymentMethod::Free`, transfer fields empty).
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PaymentInput {
     pub plan_id: String,
     pub mode: PurchaseMode,
     pub method: PaymentMethod,
+    #[serde(default)]
     pub payment_account_id: String,
+    #[serde(default)]
     pub reference: String,
     /// When the money was sent (unix seconds).
+    #[serde(default)]
     pub paid_at: i64,
     /// Card to card only.
     #[serde(default)]
     pub payer_card_last4: String,
 }
 
-/// Reports a transfer; it waits for an administrator.
+/// Reports a transfer, which waits for an administrator; with nothing to pay
+/// (`PaymentMethod::Free`) the subscription is added at once (status approved).
 pub async fn create_payment(ctx: &Context, token: &str, input: &PaymentInput) -> Result<Payment, Message> {
-    let card_last4 = match input.method {
-        PaymentMethod::CardToCard => input.payer_card_last4.trim().to_owned(),
-        PaymentMethod::BankTransfer => String::new(),
+    let transfer = |card_last4: String| -> Result<_, Message> {
+        Ok(Some(proto::create_payment_request::Details::Transfer(proto::ManualTransfer {
+            payment_account_id: id_bytes(&input.payment_account_id)?,
+            reference: input.reference.trim().to_owned(),
+            paid_at: Some(prost_types::Timestamp { seconds: input.paid_at, nanos: 0 }),
+            payer_card_last4: card_last4,
+        })))
+    };
+    let details = match input.method {
+        PaymentMethod::CardToCard => transfer(input.payer_card_last4.trim().to_owned())?,
+        PaymentMethod::BankTransfer => transfer(String::new())?,
+        PaymentMethod::Free => None,
     };
     let request = proto::CreatePaymentRequest {
         plan_id: id_bytes(&input.plan_id)?,
         mode: input.mode.to_proto(),
         method: input.method.to_proto(),
-        details: Some(proto::create_payment_request::Details::Transfer(proto::ManualTransfer {
-            payment_account_id: id_bytes(&input.payment_account_id)?,
-            reference: input.reference.trim().to_owned(),
-            paid_at: Some(prost_types::Timestamp { seconds: input.paid_at, nanos: 0 }),
-            payer_card_last4: card_last4,
-        })),
+        details,
     };
     let response = ctx.api.create_payment(token, &request).await.map_err(api_error)?;
     response.payment.map(Payment::from).ok_or_else(|| Message::error("errors.unknown", "payment missing"))

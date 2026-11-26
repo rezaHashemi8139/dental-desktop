@@ -79,6 +79,16 @@ export function changePassword(username: string, currentPassword: string, newPas
 /** The error of a login refused because the account still has a temporary password. */
 export const PASSWORD_CHANGE_REQUIRED = "auth.errors.passwordChangeRequired";
 
+/**
+ * A restricted login (Session.billing) whose subscription is now active: Rust logs
+ * in again with the credentials it kept, so the clinic opens without the password
+ * being typed. The new session may still be restricted (e.g. this clinic is not
+ * covered yet).
+ */
+export function resumeLogin(): Promise<Session> {
+  return invoke<Session>("resume_login");
+}
+
 export function logout(): Promise<void> {
   return invoke("logout");
 }

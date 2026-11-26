@@ -8,6 +8,7 @@ import { clinicSchema, clinicWithIdentitySchema, type ClinicValues } from "@/aut
 import {
   listCities,
   setupClinic,
+  type FreeTrial,
   type MyClinic,
   type PendingSetup,
   type Province,
@@ -26,7 +27,8 @@ import { CardContent, CardDescription, CardHeader, CardTitle } from "@/component
 
 interface ClinicSetupProps {
   setup: PendingSetup;
-  onLoggedIn: (session: Session) => void;
+  /** With the free trial a first clinic started, if it did. */
+  onLoggedIn: (session: Session, trial: FreeTrial | null) => void;
   /** Back to the login form: the person wants to use another account. */
   onCancel: () => void;
   /**
@@ -48,13 +50,14 @@ export function ClinicSetup({ setup, onLoggedIn, onCancel, onLoginFailed }: Clin
 
   // Connects the computer, then logs in with the same credentials.
   async function connect(target: SetupTarget): Promise<RustMessage | null> {
+    let trial: FreeTrial | null;
     try {
-      await setupClinic(setup.username, setup.password, target);
+      trial = await setupClinic(setup.username, setup.password, target);
     } catch (e) {
       return toRustMessage(e);
     }
     try {
-      onLoggedIn(await login(setup.username, setup.password));
+      onLoggedIn(await login(setup.username, setup.password), trial);
     } catch (e) {
       onLoginFailed(toRustMessage(e));
     }

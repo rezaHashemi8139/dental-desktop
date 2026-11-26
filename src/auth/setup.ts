@@ -98,9 +98,19 @@ export function listMyClinics(username: string, password: string): Promise<MyCli
   return invoke<MyClinics>("list_my_clinics", { username, password });
 }
 
-/** Connects this computer to `target`. Does not log in. */
-export function setupClinic(username: string, password: string, target: SetupTarget): Promise<void> {
-  return invoke("setup_clinic", { username, password, target });
+/** A free plan the server started by itself for the owner's first clinic (see FreeTrial in setup.rs). */
+export interface FreeTrial {
+  planName: string;
+  /** Unix seconds. */
+  endsAt: number;
+}
+
+/**
+ * Connects this computer to `target`. Does not log in. Returns the free trial
+ * registering a first clinic may have started (then the login is a full one).
+ */
+export function setupClinic(username: string, password: string, target: SetupTarget): Promise<FreeTrial | null> {
+  return invoke<FreeTrial | null>("setup_clinic", { username, password, target });
 }
 
 /** The credentials of a login that must pick or add the clinic first, with the account's clinics. */

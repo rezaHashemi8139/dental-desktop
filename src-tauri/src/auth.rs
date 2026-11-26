@@ -103,16 +103,25 @@ pub struct Session {
 /// A restricted login: the clinic's owner, while the clinic cannot be used (no
 /// subscription in force, or more clinics or computers than it allows). The server
 /// sends no database keys and no offline grant, so the database stays locked;
-/// only the subscription calls work (billing.rs). Once a purchase is approved the
-/// owner logs in again for a full session.
+/// only the subscription calls work (billing.rs). A billing-only session never
+/// becomes a full one on the server, so once a purchase is approved the app logs
+/// in again by itself with the kept password (`resume_request`).
 pub struct BillingSession {
     pub info: SessionInfo,
     token: Zeroizing<String>,
+    /// Kept in memory (wiped on drop), like an offline session's, so the clinic
+    /// opens as soon as the subscription is active, without typing it again.
+    password: Zeroizing<String>,
 }
 
 impl BillingSession {
     pub fn token(&self) -> &str {
         &self.token
+    }
+
+    /// The credentials to log in again with (`login`).
+    pub fn resume_request(&self) -> (String, Zeroizing<String>) {
+        (self.info.username.clone(), self.password.clone())
     }
 }
 
@@ -249,6 +258,9 @@ pub(crate) fn server_error(code: &str, reason: &str) -> Message {
         "payment_pending" => err("billing.errors.paymentPending"),
         "payment_not_found" => err("billing.errors.paymentNotFound"),
         "payment_not_pending" => err("billing.errors.paymentNotPending"),
+        "purchase_limit_reached" => err("billing.errors.purchaseLimitReached"),
+        "payment_required" => err("billing.errors.paymentRequired"),
+        "payment_not_required" => err("billing.errors.paymentNotRequired"),
         crate::api::UPDATE_REQUIRED => err(crate::update::REQUIRED_ERROR),
         _ => Message::error("auth.errors.server", format!("{code}: {reason}")),
     }
@@ -412,7 +424,7 @@ pub async fn login(ctx: &Context, username: &str, password: &str, online: bool) 
         Ok((_, response)) if response.billing_only => {
             // Nobody may use the clinic now, offline included.
             revoke_offline_access(ctx, &installation, username, &response.billing_reason)?;
-            billing_session(response).map(Login::Billing)
+            billing_session(response, password).map(Login::Billing)
         }
         Ok((client_key, response)) => {
             login_online(ctx, &installation, &client_key, password, response).await.map(Login::Full)
@@ -429,7 +441,7 @@ pub async fn login(ctx: &Context, username: &str, password: &str, online: bool) 
 }
 
 /// A billing-only LoginResponse (no keys, no grant) as a restricted session.
-fn billing_session(response: proto::LoginResponse) -> Result<BillingSession, Message> {
+fn billing_session(response: proto::LoginResponse, password: &str) -> Result<BillingSession, Message> {
     let user = response.user.ok_or_else(|| internal("login response without user"))?;
     Ok(BillingSession {
         info: SessionInfo {
@@ -445,6 +457,7 @@ fn billing_session(response: proto::LoginResponse) -> Result<BillingSession, Mes
             billing: Some(billing_reason(&response.billing_reason)),
         },
         token: Zeroizing::new(response.session_token),
+        password: Zeroizing::new(password.to_owned()),
     })
 }
 
@@ -950,7 +963,8 @@ mod e2e {
             identity: String::new(),
             nationality: String::new(),
         });
-        setup::setup(&online, &doctor, "Doctor-passw0rd", &target).await.unwrap();
+        // A first clinic starts a free plan by itself when the server has one on sale.
+        let trial = setup::setup(&online, &doctor, "Doctor-passw0rd", &target).await.unwrap();
         assert_eq!(mode(&online).await, ConnectionMode::Online);
         let error = setup::setup(&online, &doctor, "Doctor-passw0rd", &target).await.err().unwrap();
         assert_eq!(error.key, "setup.errors.alreadyDone");
@@ -965,7 +979,13 @@ mod e2e {
         setup::setup(&second, &doctor, "Doctor-passw0rd", &existing).await.unwrap();
         assert_eq!(mode(&second).await, ConnectionMode::Online);
 
-        // A new owner has no subscription: a restricted login, only for buying one.
+        if let Some(trial) = trial {
+            assert!(trial.ends_at > clock::now_unix());
+            // So the first login is a full one, and the full-login checks run with this owner.
+            return full_flow(&online, &doctor, "Doctor-passw0rd").await;
+        }
+
+        // No free plan on sale: a new owner has no subscription, so a restricted login, only for buying one.
         let Login::Billing(billing) = login(&online, &doctor, "Doctor-passw0rd", true).await.unwrap() else {
             panic!("a new owner has no subscription, so the login is billing-only");
         };
@@ -976,6 +996,31 @@ mod e2e {
         crate::billing::plans(&online, billing.token()).await.unwrap();
         // No database keys and no offline access came with it.
         assert_eq!(local_login_status(&online), LocalLogin::NobodyYet);
+
+        // A free plan (one the admin panel made) is active at once, and logging in
+        // again with the kept password opens the full session (lib.rs resume_login).
+        let plans = crate::billing::plans(&online, billing.token()).await.unwrap();
+        if let Some(free) = plans.iter().find(|plan| plan.price_rials == 0 && plan.purchased == 0) {
+            let input = crate::billing::PaymentInput {
+                plan_id: free.id.clone(),
+                mode: crate::billing::PurchaseMode::Extend,
+                method: crate::billing::PaymentMethod::Free,
+                payment_account_id: String::new(),
+                reference: String::new(),
+                paid_at: 0,
+                payer_card_last4: String::new(),
+            };
+            let payment = crate::billing::create_payment(&online, billing.token(), &input).await.unwrap();
+            assert_eq!(payment.status, crate::billing::PaymentStatus::Approved);
+            let (username, password) = billing.resume_request();
+            let Login::Full(session) = login(&online, &username, &password, true).await.unwrap() else {
+                panic!("still billing-only after a free plan was activated");
+            };
+            assert!(session.info.billing.is_none() && session.info.is_owner);
+            logout(&online, session).await;
+        } else {
+            eprintln!("Free activation not tested: no free plan left to take on the server");
+        }
         logout_billing(&online, billing).await;
 
         // Full logins need a subscription in force, sold in the admin panel.
@@ -983,19 +1028,18 @@ mod e2e {
             eprintln!("Full logins not tested: set DENTAL_E2E_OWNER and DENTAL_E2E_PASSWORD to an owner with a subscription");
             return;
         };
-        full_flow(&owner, &password).await;
-    }
-
-    /// Online and offline logins of an owner whose subscription is in force, on a new
-    /// installation of the first of their clinics that has room for one more computer.
-    async fn full_flow(doctor: &str, password: &str) {
         let online = context("full");
-        let mine = setup::my_clinics(&online, doctor, password).await.unwrap();
+        let mine = setup::my_clinics(&online, &owner, &password).await.unwrap();
         let clinic = mine.clinics.iter().find(|clinic| clinic.cannot_add.is_none()).expect("a clinic with room");
         let license_number = clinic.license_number.clone();
-        setup::setup(&online, doctor, password, &setup::SetupTarget::Existing(setup::ExistingClinicInput { license_number }))
-            .await
-            .unwrap();
+        let target = setup::SetupTarget::Existing(setup::ExistingClinicInput { license_number });
+        setup::setup(&online, &owner, &password, &target).await.unwrap();
+        full_flow(&online, &owner, &password).await;
+    }
+
+    /// Online and offline logins of an owner whose subscription is in force, on the
+    /// installation `online`, already registered to one of their clinics.
+    async fn full_flow(online: &Context, doctor: &str, password: &str) {
         let full = |login: Login| match login {
             Login::Full(session) => session,
             Login::Billing(_) => panic!("billing-only login despite the subscription"),

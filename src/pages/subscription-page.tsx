@@ -10,10 +10,9 @@ import {
   TriangleAlertIcon,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { logout } from "@/auth/session";
-import { setSession, useSession } from "@/auth/store";
+import { logout, resumeLogin } from "@/auth/session";
+import { getSession, setSession, useSession } from "@/auth/store";
 import { useFormatDate } from "@/i18n/calendar";
-import { useFormatRials } from "@/i18n/currency";
 import { toRustMessage, translateMessage, type RustMessage } from "@/i18n/message";
 import {
   billingStatus,
@@ -21,6 +20,8 @@ import {
   listMyPayments,
   listPlans,
   PENDING_POLL_MS,
+  purchaseLimitReached,
+  useFormatPrice,
   type BillingStatus,
   type Payment,
   type Plan,
@@ -41,7 +42,7 @@ interface BillingData {
 /**
  * /subscription: the clinic owner's subscription, the plans for sale and the
  * owner's payments. For a restricted login (no subscription in force) it is the
- * only page: once a payment is approved, the owner logs in again.
+ * only page: once a payment is approved, the clinic opens by itself (resumeLogin).
  */
 export function SubscriptionPage() {
   const { t } = useTranslation();
@@ -85,6 +86,25 @@ export function SubscriptionPage() {
     const timer = setInterval(load, PENDING_POLL_MS);
     return () => clearInterval(timer);
   }, [pending, load]);
+
+  // Approved while restricted: Rust logs in again by itself and the clinic opens.
+  // Once per payment (the ref, not a cleanup, also keeps React's double effects in
+  // development from starting it twice).
+  const [resume, setResume] = useState<"opening" | "stillRestricted" | RustMessage | null>(null);
+  const resumedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (decided?.status !== "approved" || !getSession()?.billing || resumedFor.current === decided.id) return;
+    resumedFor.current = decided.id;
+    setResume("opening");
+    resumeLogin().then(
+      (next) => {
+        setSession(next);
+        if (next.billing) setResume("stillRestricted");
+        else navigate({ to: "/home", replace: true });
+      },
+      (e) => setResume(toRustMessage(e)),
+    );
+  }, [decided, navigate]);
 
   // The app layout leaves for /login when there is no session.
   if (!session) return null;
@@ -134,11 +154,30 @@ export function SubscriptionPage() {
       {decided && (
         <Alert variant={decided.status === "approved" ? "info" : "destructive"}>
           {decided.status === "approved" ? <CircleCheckIcon /> : <TriangleAlertIcon />}
-          <AlertTitle>{t(decided.status === "approved" ? "billing.decided.approved" : "billing.decided.rejected")}</AlertTitle>
+          <AlertTitle>
+            {t(
+              decided.status !== "approved"
+                ? "billing.decided.rejected"
+                : decided.method === "free"
+                  ? "billing.decided.activated"
+                  : "billing.decided.approved",
+            )}
+          </AlertTitle>
           <AlertDescription>
-            {decided.status === "approved"
-              ? t(session.billing ? "billing.decided.approvedLogIn" : "billing.decided.approvedActive")
-              : decided.rejectionReason || t("billing.decided.noReason")}
+            {decided.status !== "approved" ? (
+              decided.rejectionReason || t("billing.decided.noReason")
+            ) : !session.billing ? (
+              t("billing.decided.approvedActive")
+            ) : resume === null || resume === "opening" ? (
+              <span className="flex items-center gap-2">
+                <LoaderCircleIcon className="size-4 animate-spin" />
+                {t("billing.decided.opening")}
+              </span>
+            ) : resume === "stillRestricted" ? (
+              t("billing.decided.stillRestricted")
+            ) : (
+              `${translateMessage(resume)} ${t("billing.decided.approvedLogIn")}`
+            )}
           </AlertDescription>
         </Alert>
       )}
@@ -207,8 +246,10 @@ export function SubscriptionPage() {
         accounts={data?.status.payTo ?? []}
         canUpgradeNow={!!status?.current && status.upcoming.length === 0}
         onClose={() => setBuying(null)}
-        onCreated={() => {
+        onCreated={(payment) => {
           setBuying(null);
+          // Nothing to pay: already approved, so say so now rather than wait for a review.
+          if (payment.status === "approved") setDecided(payment);
           load();
         }}
       />
@@ -287,20 +328,26 @@ function ClinicsUsage({ status }: { status: BillingStatus }) {
 
 function PlanCard({ plan, disabled, onBuy }: { plan: Plan; disabled: boolean; onBuy: () => void }) {
   const { t } = useTranslation();
-  const formatRials = useFormatRials();
+  const formatPrice = useFormatPrice();
+  const limitReached = purchaseLimitReached(plan);
   return (
     <div className="flex flex-col gap-3 rounded-lg border p-4">
       <div className="flex flex-col gap-1">
         <span className="font-semibold">{plan.name}</span>
-        <span className="text-lg font-bold">{formatRials(plan.priceRials)}</span>
+        <span className="text-lg font-bold">{formatPrice(plan.priceRials)}</span>
       </div>
       <ul className="flex flex-col gap-1 text-sm text-muted-foreground">
         <li>{t("billing.plans.duration", { days: plan.durationDays })}</li>
         <li>{t("billing.plans.clinics", { clinics: plan.maxClinics })}</li>
         <li>{t("billing.plans.devices", { devices: plan.maxDevicesPerClinic })}</li>
+        {plan.maxPurchasesPerOwner > 0 && (
+          <li>
+            {t("billing.plans.purchaseLimit", { used: plan.purchased, max: plan.maxPurchasesPerOwner })}
+          </li>
+        )}
       </ul>
-      <Button className="mt-auto" onClick={onBuy} disabled={disabled}>
-        {t("billing.plans.buy")}
+      <Button className="mt-auto" onClick={onBuy} disabled={disabled || limitReached}>
+        {t(limitReached ? "billing.plans.limitReached" : plan.priceRials === 0 ? "billing.plans.activate" : "billing.plans.buy")}
       </Button>
     </div>
   );
@@ -308,7 +355,7 @@ function PlanCard({ plan, disabled, onBuy }: { plan: Plan; disabled: boolean; on
 
 function PendingPayment({ payment, onChanged }: { payment: Payment; onChanged: () => void }) {
   const { t } = useTranslation();
-  const formatRials = useFormatRials();
+  const formatPrice = useFormatPrice();
   const formatDate = useFormatDate();
   const [error, setError] = useState<RustMessage | null>(null);
   const [canceling, setCanceling] = useState(false);
@@ -340,7 +387,7 @@ function PendingPayment({ payment, onChanged }: { payment: Payment; onChanged: (
           <dt className="text-muted-foreground">{t("billing.history.plan")}</dt>
           <dd>{payment.planName}</dd>
           <dt className="text-muted-foreground">{t("billing.history.amount")}</dt>
-          <dd>{formatRials(payment.amountRials)}</dd>
+          <dd>{formatPrice(payment.amountRials)}</dd>
           <dt className="text-muted-foreground">{t("billing.fields.reference")}</dt>
           <dd>
             <bdi dir="ltr">{payment.reference}</bdi>
@@ -371,7 +418,7 @@ const STATUS_BADGE = {
 
 function PaymentHistory({ payments }: { payments: Payment[] }) {
   const { t } = useTranslation();
-  const formatRials = useFormatRials();
+  const formatPrice = useFormatPrice();
   const formatDate = useFormatDate();
   return (
     <Card>
@@ -387,7 +434,7 @@ function PaymentHistory({ payments }: { payments: Payment[] }) {
                 <Badge variant={STATUS_BADGE[payment.status]}>{t(`billing.statuses.${payment.status}`)}</Badge>
               </span>
               <span className="text-xs text-muted-foreground">
-                {formatDate(payment.createdAt * 1000)} · {formatRials(payment.amountRials)} ·{" "}
+                {formatDate(payment.createdAt * 1000)} · {formatPrice(payment.amountRials)} ·{" "}
                 {t(`billing.modes.${payment.mode}`)}
               </span>
               {payment.status === "rejected" && payment.rejectionReason && (

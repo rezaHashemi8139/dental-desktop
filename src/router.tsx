@@ -94,6 +94,11 @@ const appRoute = createRoute({
 const homeRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "home",
+  // ?trialPlan=<name>&trialEndsAt=<unix seconds> right after a first clinic started a free trial.
+  validateSearch: (search: Record<string, unknown>): { trialPlan?: string; trialEndsAt?: number } =>
+    typeof search.trialPlan === "string" && typeof search.trialEndsAt === "number"
+      ? { trialPlan: search.trialPlan, trialEndsAt: search.trialEndsAt }
+      : {},
   component: HomePage,
 });
 

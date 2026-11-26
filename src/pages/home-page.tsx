@@ -1,19 +1,24 @@
 import { useState } from "react";
-import { useNavigate } from "@tanstack/react-router";
-import { CloudIcon, CloudOffIcon, LogOutIcon, ShieldCheckIcon } from "lucide-react";
+import { getRouteApi, useNavigate } from "@tanstack/react-router";
+import { CloudIcon, CloudOffIcon, GiftIcon, LogOutIcon, ShieldCheckIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { logout } from "@/auth/session";
 import { setSession, useSession } from "@/auth/store";
 import { useFormatDate } from "@/i18n/calendar";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+
+const homeRoute = getRouteApi("/app/home");
 
 export function HomePage() {
   const { t } = useTranslation();
   // Live: an offline session that reconnects shows as online right away.
   const session = useSession();
   const navigate = useNavigate();
+  // Right after a first clinic started a free trial (src/pages/auth-layout.tsx).
+  const { trialPlan, trialEndsAt } = homeRoute.useSearch();
   const formatDate = useFormatDate();
   const [busy, setBusy] = useState(false);
   // The app layout leaves for /login when there is no session.
@@ -44,6 +49,15 @@ export function HomePage() {
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3 text-sm">
+        {trialPlan && trialEndsAt && (
+          <Alert variant="info">
+            <GiftIcon />
+            <AlertTitle>{t("home.trial.title")}</AlertTitle>
+            <AlertDescription>
+              {t("home.trial.description", { plan: trialPlan, date: formatDate(trialEndsAt * 1000) })}
+            </AlertDescription>
+          </Alert>
+        )}
         <div className="flex items-center gap-2">
           <span className="text-muted-foreground">{t("home.role")}:</span>
           <Badge variant="secondary">{role}</Badge>

@@ -1,4 +1,4 @@
-import { useEffect, useState, type MouseEvent } from "react";
+import { useEffect, useState, type FormEvent, type MouseEvent } from "react";
 import { Controller, useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { CheckIcon, CopyIcon, LoaderCircleIcon } from "lucide-react";
@@ -8,13 +8,16 @@ import { useFormatDate } from "@/i18n/calendar";
 import { useFormatRials } from "@/i18n/currency";
 import { toRustMessage, translateMessage, type RustMessage } from "@/i18n/message";
 import {
+  activateFree,
   createPayment,
   MAX_PAYMENT_AGE_DAYS,
   quotePayment,
   type Payment,
   type PaymentAccount,
   type Plan,
+  type PurchaseMode,
   type Quote,
+  useFormatPrice,
 } from "@/lib/billing";
 import { fieldError } from "@/lib/form";
 import { cn } from "@/lib/utils";
@@ -45,18 +48,15 @@ interface PurchaseDialogProps {
 /**
  * Buying a plan: the owner sees what to pay and where, transfers the money
  * themselves, then reports the transfer here; an administrator approves it.
- * Opened from the subscription page (src/pages/subscription-page.tsx).
+ * With nothing to pay (a free plan, or an upgrade the credit covers) there is no
+ * transfer: one press activates it. Opened from the subscription page
+ * (src/pages/subscription-page.tsx).
  */
 export function PurchaseDialog({ plan, accounts, canUpgradeNow, onClose, onCreated }: PurchaseDialogProps) {
-  const { t } = useTranslation();
   return (
     <Dialog open={!!plan} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-h-[calc(100svh-2rem)] overflow-y-auto sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>{t("billing.purchase.title", { plan: plan?.name ?? "" })}</DialogTitle>
-          <DialogDescription>{t("billing.purchase.description")}</DialogDescription>
-        </DialogHeader>
-        {/* A new form for each plan. */}
+        {/* A new form for each plan; it has the header, which depends on whether there is anything to pay. */}
         {plan && (
           <PurchaseForm
             key={plan.id}
@@ -105,6 +105,12 @@ function PurchaseForm({ plan, accounts, canUpgradeNow, onCreated, onCancel }: Pu
   const method = useWatch({ control, name: "method" });
   const accountId = useWatch({ control, name: "accountId" });
   const account = accounts.find((a) => a.id === accountId);
+  const { quote, error: quoteError } = useQuote(plan.id, mode);
+  // Nothing to pay (a free plan, or an upgrade the credit covers): no transfer, active at once.
+  // Until the quote is in, a free plan is taken to stay free, so its transfer fields never flash up.
+  const free = quote ? quote.amountRials === 0 : plan.priceRials === 0;
+  const [activating, setActivating] = useState(false);
+  const working = isSubmitting || activating;
 
   // An account with only an IBAN takes bank transfers only, and one with only a card number card to card only.
   useEffect(() => {
@@ -146,132 +152,154 @@ function PurchaseForm({ plan, accounts, canUpgradeNow, onCreated, onCancel }: Pu
     }
   }
 
+  // Not through the form's checks: there are no transfer fields to fill in.
+  async function activate(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setActivating(true);
+    try {
+      onCreated(await activateFree(plan.id, mode));
+    } catch (failure) {
+      setError(toRustMessage(failure));
+      setActivating(false);
+    }
+  }
+
   return (
-    <form className="flex flex-col gap-5" onSubmit={handleSubmit(submit)} noValidate>
-      {canUpgradeNow && (
-        <div className="flex flex-col gap-2">
-          <p className="text-sm font-medium">{t("billing.purchase.when")}</p>
-          <Tabs
-            value={mode}
-            onValueChange={(value) => value === "extend" || value === "upgradeNow" ? setValue("mode", value) : undefined}
-          >
-            <TabsList className="w-full">
-              <TabsTrigger value="extend">{t("billing.modes.extend")}</TabsTrigger>
-              <TabsTrigger value="upgradeNow">{t("billing.modes.upgradeNow")}</TabsTrigger>
-            </TabsList>
-          </Tabs>
-          <p className="text-xs text-muted-foreground">
-            {t(mode === "upgradeNow" ? "billing.modes.upgradeNowHint" : "billing.modes.extendHint")}
-          </p>
-        </div>
-      )}
-
-      <QuoteSummary planId={plan.id} mode={mode} />
-
-      <div className="flex flex-col gap-2">
-        <p className="text-sm font-medium">{t("billing.purchase.payTo")}</p>
-        {accounts.length === 0 ? (
-          <Alert variant="destructive">
-            <AlertDescription>{t("billing.purchase.noAccounts")}</AlertDescription>
-          </Alert>
-        ) : (
-          <div role="radiogroup" aria-label={t("billing.purchase.payTo")} className="flex flex-col gap-2">
-            {accounts.map((option) => (
-              <AccountOption
-                key={option.id}
-                account={option}
-                checked={option.id === accountId}
-                onSelect={() => setValue("accountId", option.id, { shouldValidate: !!errors.accountId })}
-              />
-            ))}
+    <>
+      <DialogHeader>
+        <DialogTitle>{t(free ? "billing.purchase.freeTitle" : "billing.purchase.title", { plan: plan.name })}</DialogTitle>
+        <DialogDescription>{t(free ? "billing.purchase.freeDescription" : "billing.purchase.description")}</DialogDescription>
+      </DialogHeader>
+      <form className="flex flex-col gap-5" onSubmit={free ? activate : handleSubmit(submit)} noValidate>
+        {canUpgradeNow && (
+          <div className="flex flex-col gap-2">
+            <p className="text-sm font-medium">{t("billing.purchase.when")}</p>
+            <Tabs
+              value={mode}
+              onValueChange={(value) => value === "extend" || value === "upgradeNow" ? setValue("mode", value) : undefined}
+            >
+              <TabsList className="w-full">
+                <TabsTrigger value="extend">{t("billing.modes.extend")}</TabsTrigger>
+                <TabsTrigger value="upgradeNow">{t("billing.modes.upgradeNow")}</TabsTrigger>
+              </TabsList>
+            </Tabs>
+            <p className="text-xs text-muted-foreground">
+              {t(mode === "upgradeNow" ? "billing.modes.upgradeNowHint" : "billing.modes.extendHint")}
+            </p>
           </div>
         )}
-        {errors.accountId && <p className="text-xs text-destructive">{fieldError(errors.accountId)}</p>}
-      </div>
 
-      <div className="flex flex-col gap-2">
-        <p className="text-sm font-medium">{t("billing.purchase.method")}</p>
-        <Tabs
-          value={method}
-          onValueChange={(value) =>
-            value === "cardToCard" || value === "bankTransfer" ? setValue("method", value) : undefined
-          }
-        >
-          <TabsList className="w-full">
-            <TabsTrigger value="cardToCard" disabled={!!account && !account.cardNumber}>
-              {t("billing.methods.cardToCard")}
-            </TabsTrigger>
-            <TabsTrigger value="bankTransfer" disabled={!!account && !account.iban}>
-              {t("billing.methods.bankTransfer")}
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
-      </div>
+        <QuoteSummary quote={quote} error={quoteError} />
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <FormField
-          id="payment-reference"
-          label={t("billing.fields.reference")}
-          hint={t("billing.hints.reference")}
-          error={fieldError(errors.reference)}
-          maxLength={40}
-          latin
-          {...register("reference")}
-        />
-        <Controller
-          control={control}
-          name="daysAgo"
-          render={({ field }) => (
-            <SelectField
-              id="payment-day"
-              label={t("billing.fields.paidOn")}
-              placeholder=""
-              error={null}
-              options={days}
-              value={field.value}
-              onValueChange={field.onChange}
-              triggerRef={field.ref}
-            />
-          )}
-        />
-        {method === "cardToCard" && (
-          <FormField
-            id="payment-card-last4"
-            label={t("billing.fields.cardLast4")}
-            hint={t("billing.hints.cardLast4")}
-            error={fieldError(errors.payerCardLast4)}
-            inputMode="numeric"
-            maxLength={4}
-            latin
-            {...register("payerCardLast4")}
-          />
+        {!free && (
+          <>
+            <div className="flex flex-col gap-2">
+              <p className="text-sm font-medium">{t("billing.purchase.payTo")}</p>
+              {accounts.length === 0 ? (
+                <Alert variant="destructive">
+                  <AlertDescription>{t("billing.purchase.noAccounts")}</AlertDescription>
+                </Alert>
+              ) : (
+                <div role="radiogroup" aria-label={t("billing.purchase.payTo")} className="flex flex-col gap-2">
+                  {accounts.map((option) => (
+                    <AccountOption
+                      key={option.id}
+                      account={option}
+                      checked={option.id === accountId}
+                      onSelect={() => setValue("accountId", option.id, { shouldValidate: !!errors.accountId })}
+                    />
+                  ))}
+                </div>
+              )}
+              {errors.accountId && <p className="text-xs text-destructive">{fieldError(errors.accountId)}</p>}
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <p className="text-sm font-medium">{t("billing.purchase.method")}</p>
+              <Tabs
+                value={method}
+                onValueChange={(value) =>
+                  value === "cardToCard" || value === "bankTransfer" ? setValue("method", value) : undefined
+                }
+              >
+                <TabsList className="w-full">
+                  <TabsTrigger value="cardToCard" disabled={!!account && !account.cardNumber}>
+                    {t("billing.methods.cardToCard")}
+                  </TabsTrigger>
+                  <TabsTrigger value="bankTransfer" disabled={!!account && !account.iban}>
+                    {t("billing.methods.bankTransfer")}
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <FormField
+                id="payment-reference"
+                label={t("billing.fields.reference")}
+                hint={t("billing.hints.reference")}
+                error={fieldError(errors.reference)}
+                maxLength={40}
+                latin
+                {...register("reference")}
+              />
+              <Controller
+                control={control}
+                name="daysAgo"
+                render={({ field }) => (
+                  <SelectField
+                    id="payment-day"
+                    label={t("billing.fields.paidOn")}
+                    placeholder=""
+                    error={null}
+                    options={days}
+                    value={field.value}
+                    onValueChange={field.onChange}
+                    triggerRef={field.ref}
+                  />
+                )}
+              />
+              {method === "cardToCard" && (
+                <FormField
+                  id="payment-card-last4"
+                  label={t("billing.fields.cardLast4")}
+                  hint={t("billing.hints.cardLast4")}
+                  error={fieldError(errors.payerCardLast4)}
+                  inputMode="numeric"
+                  maxLength={4}
+                  latin
+                  {...register("payerCardLast4")}
+                />
+              )}
+            </div>
+          </>
         )}
-      </div>
 
-      {error && (
-        <Alert variant="destructive">
-          <AlertDescription>{translateMessage(error)}</AlertDescription>
-        </Alert>
-      )}
+        {error && (
+          <Alert variant="destructive">
+            <AlertDescription>{translateMessage(error)}</AlertDescription>
+          </Alert>
+        )}
 
-      <DialogFooter>
-        <Button type="button" variant="outline" onClick={onCancel} disabled={isSubmitting}>
-          {t("billing.purchase.cancel")}
-        </Button>
-        <Button type="submit" disabled={isSubmitting || accounts.length === 0}>
-          {isSubmitting && <LoaderCircleIcon className="animate-spin" />}
-          {t(isSubmitting ? "billing.purchase.working" : "billing.purchase.submit")}
-        </Button>
-      </DialogFooter>
-    </form>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={onCancel} disabled={working}>
+            {t("billing.purchase.cancel")}
+          </Button>
+          <Button type="submit" disabled={working || !quote || (!free && accounts.length === 0)}>
+            {working && <LoaderCircleIcon className="animate-spin" />}
+            {free
+              ? t(working ? "billing.purchase.activating" : "billing.purchase.activate")
+              : t(working ? "billing.purchase.working" : "billing.purchase.submit")}
+          </Button>
+        </DialogFooter>
+      </form>
+    </>
   );
 }
 
-/** What to pay, from the server, for the chosen plan and mode. */
-function QuoteSummary({ planId, mode }: { planId: string; mode: PaymentValues["mode"] }) {
-  const { t } = useTranslation();
-  const formatRials = useFormatRials();
-  const formatDate = useFormatDate();
+/** What buying the plan in `mode` costs, from the server; asked again when the mode changes. */
+function useQuote(planId: string, mode: PurchaseMode): { quote: Quote | null; error: RustMessage | null } {
   const [quote, setQuote] = useState<Quote | null>(null);
   const [error, setError] = useState<RustMessage | null>(null);
 
@@ -287,6 +315,16 @@ function QuoteSummary({ planId, mode }: { planId: string; mode: PaymentValues["m
       current = false;
     };
   }, [planId, mode]);
+
+  return { quote, error };
+}
+
+/** What to pay and the period bought. */
+function QuoteSummary({ quote, error }: { quote: Quote | null; error: RustMessage | null }) {
+  const { t } = useTranslation();
+  const formatRials = useFormatRials();
+  const formatPrice = useFormatPrice();
+  const formatDate = useFormatDate();
 
   if (error) {
     return (
@@ -306,7 +344,7 @@ function QuoteSummary({ planId, mode }: { planId: string; mode: PaymentValues["m
   return (
     <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 rounded-lg border p-3 text-sm">
       <dt className="text-muted-foreground">{t("billing.purchase.price")}</dt>
-      <dd>{formatRials(quote.priceRials)}</dd>
+      <dd>{formatPrice(quote.priceRials)}</dd>
       {quote.creditRials > 0 && (
         <>
           <dt className="text-muted-foreground">{t("billing.purchase.credit")}</dt>
@@ -314,7 +352,7 @@ function QuoteSummary({ planId, mode }: { planId: string; mode: PaymentValues["m
         </>
       )}
       <dt className="font-medium">{t("billing.purchase.amount")}</dt>
-      <dd className="font-semibold">{formatRials(quote.amountRials)}</dd>
+      <dd className="font-semibold">{formatPrice(quote.amountRials)}</dd>
       <dt className="text-muted-foreground">{t("billing.purchase.period")}</dt>
       <dd>
         {t("billing.period", { from: formatDate(quote.startsAt * 1000), to: formatDate(quote.endsAt * 1000) })}

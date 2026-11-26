@@ -108,9 +108,11 @@ function AuthScreen() {
       <Card className="w-full max-w-2xl">
         <ClinicSetup
           setup={pending}
-          onLoggedIn={(session) => {
+          onLoggedIn={(session, trial) => {
             setSession(session);
-            navigate({ to: "/home", replace: true });
+            // The home page tells the owner about a free trial the new clinic started.
+            const search = trial ? { trialPlan: trial.planName, trialEndsAt: trial.endsAt } : {};
+            navigate({ to: "/home", search, replace: true });
           }}
           onCancel={() => {
             setBack({ username: pending.username });

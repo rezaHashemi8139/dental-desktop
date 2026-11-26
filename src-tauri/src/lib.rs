@@ -264,13 +264,14 @@ async fn list_cities(state: State<'_, AuthState>) -> Result<Vec<setup::Province>
 
 /// First start: connects this computer to one clinic of the account, new or
 /// existing, for good. The frontend then logs in with the same credentials.
+/// Returns the free trial a first clinic may have started.
 #[tauri::command]
 async fn setup_clinic(
     state: State<'_, AuthState>,
     username: String,
     password: String,
     target: setup::SetupTarget,
-) -> Result<(), Message> {
+) -> Result<Option<setup::FreeTrial>, Message> {
     let password = Zeroizing::new(password);
     let Ok(_busy) = state.busy.try_lock() else {
         return Err(Message::new("auth.errors.busy"));
@@ -322,26 +323,58 @@ async fn login(app: AppHandle, state: State<'_, AuthState>, username: String, pa
             update_required_by_server(&app, &state);
         }
     })?;
-    let session = match login {
-        auth::Login::Full(session) => session,
+    if let auth::Login::Full(session) = &login {
+        if online && !session.info.online {
+            // The server went away since the last check: let everyone know now.
+            let watcher = Arc::clone(&state.watcher);
+            tauri::async_runtime::spawn(async move { watcher.refresh().await });
+        }
+    }
+    Ok(keep_login(&app, &state, login))
+}
+
+/// Makes `login` the open one. Call with `busy` held and no session open.
+fn keep_login(app: &AppHandle, state: &AuthState, login: auth::Login) -> SessionInfo {
+    match login {
+        auth::Login::Full(session) => {
+            let info = session.info.clone();
+            *state.session.lock().unwrap() = Some(session);
+            // Changes made offline go out now, and what other installations changed comes in.
+            request_sync(app);
+            info
+        }
         auth::Login::Billing(billing) => {
             // Restricted: no database, nothing to sync.
             let info = billing.info.clone();
             *state.billing.lock().unwrap() = Some(billing);
-            return Ok(info);
+            info
         }
-    };
-    if online && !session.info.online {
-        // The server went away since the last check: let everyone know now.
-        let watcher = Arc::clone(&state.watcher);
-        tauri::async_runtime::spawn(async move { watcher.refresh().await });
     }
+}
 
-    let info = session.info.clone();
-    *state.session.lock().unwrap() = Some(session);
-    // Changes made offline go out now, and what other installations changed comes in.
-    request_sync(&app);
-    Ok(info)
+/// A restricted login after a purchase is approved (or activated at once): logs in
+/// again with the kept credentials, so the clinic opens without typing the password.
+/// Returns the new session: full, or still restricted if the subscription does not
+/// cover this clinic and computer yet. On failure the restricted session stays open.
+#[tauri::command]
+async fn resume_login(app: AppHandle, state: State<'_, AuthState>) -> Result<SessionInfo, Message> {
+    let Ok(_busy) = state.busy.try_lock() else {
+        return Err(Message::new("auth.errors.busy"));
+    };
+    let (username, password) = state
+        .billing
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(BillingSession::resume_request)
+        .ok_or_else(|| Message::new("errors.notLoggedIn"))?;
+    let login = auth::login(&state.ctx, &username, &password, true).await?;
+    // Replaced: the old restricted session ends on the server too.
+    let previous = state.billing.lock().unwrap().take();
+    if let Some(previous) = previous {
+        auth::logout_billing(&state.ctx, previous).await;
+    }
+    Ok(keep_login(&app, &state, login))
 }
 
 /// Never waits for a reconnect in progress: the session is closed at once, and a
@@ -697,6 +730,7 @@ pub fn run() {
             sign_up,
             change_password,
             login,
+            resume_login,
             logout,
             billing_status,
             list_plans,
