@@ -231,7 +231,13 @@ export function SubscriptionPage() {
             ) : (
               <div className="grid gap-3 sm:grid-cols-2">
                 {data.plans.map((plan) => (
-                  <PlanCard key={plan.id} plan={plan} disabled={!!pending} onBuy={() => setBuying(plan)} />
+                  <PlanCard
+                    key={plan.id}
+                    plan={plan}
+                    active={plan.id === data.status.current?.planId}
+                    disabled={!!pending}
+                    onBuy={() => setBuying(plan)}
+                  />
                 ))}
               </div>
             )}
@@ -326,14 +332,27 @@ function ClinicsUsage({ status }: { status: BillingStatus }) {
   );
 }
 
-function PlanCard({ plan, disabled, onBuy }: { plan: Plan; disabled: boolean; onBuy: () => void }) {
+interface PlanCardProps {
+  plan: Plan;
+  /** The plan of the subscription in force. */
+  active: boolean;
+  disabled: boolean;
+  onBuy: () => void;
+}
+
+function PlanCard({ plan, active, disabled, onBuy }: PlanCardProps) {
   const { t } = useTranslation();
   const formatPrice = useFormatPrice();
   const limitReached = purchaseLimitReached(plan);
+  // A paid plan in force can still be renewed; a free one has nothing to renew.
+  const activeFree = active && plan.priceRials === 0;
   return (
     <div className="flex flex-col gap-3 rounded-lg border p-4">
       <div className="flex flex-col gap-1">
-        <span className="font-semibold">{plan.name}</span>
+        <span className="flex items-center justify-between gap-2">
+          <span className="font-semibold">{plan.name}</span>
+          {active && <Badge variant="secondary">{t("billing.plans.active")}</Badge>}
+        </span>
         <span className="text-lg font-bold">{formatPrice(plan.priceRials)}</span>
       </div>
       <ul className="flex flex-col gap-1 text-sm text-muted-foreground">
@@ -346,8 +365,16 @@ function PlanCard({ plan, disabled, onBuy }: { plan: Plan; disabled: boolean; on
           </li>
         )}
       </ul>
-      <Button className="mt-auto" onClick={onBuy} disabled={disabled || limitReached}>
-        {t(limitReached ? "billing.plans.limitReached" : plan.priceRials === 0 ? "billing.plans.activate" : "billing.plans.buy")}
+      <Button className="mt-auto" onClick={onBuy} disabled={disabled || limitReached || activeFree}>
+        {t(
+          activeFree
+            ? "billing.plans.active"
+            : limitReached
+              ? "billing.plans.limitReached"
+              : plan.priceRials === 0
+                ? "billing.plans.activate"
+                : "billing.plans.buy",
+        )}
       </Button>
     </div>
   );

@@ -70,6 +70,8 @@ impl Plan {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Subscription {
+    /// Hex.
+    pub plan_id: String,
     pub plan_name: String,
     /// As sold, whatever the plan says now.
     pub max_clinics: u32,
@@ -81,6 +83,7 @@ pub struct Subscription {
 impl From<proto::Subscription> for Subscription {
     fn from(subscription: proto::Subscription) -> Self {
         Self {
+            plan_id: hex::encode(subscription.plan_id),
             plan_name: subscription.plan_name,
             max_clinics: subscription.max_clinics,
             max_devices_per_clinic: subscription.max_devices_per_clinic,

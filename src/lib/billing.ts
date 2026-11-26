@@ -32,6 +32,7 @@ export function purchaseLimitReached(plan: Plan): boolean {
 }
 
 export interface Subscription {
+  planId: string;
   planName: string;
   maxClinics: number;
   maxDevicesPerClinic: number;
