@@ -4,7 +4,7 @@ import { CloudOffIcon, DatabaseIcon, InfoIcon, LoaderCircleIcon, RefreshCwIcon }
 import { useTranslation } from "react-i18next";
 import { useConnectivity } from "@/auth/connectivity";
 import { connectionStatus, type ConnectionMode, type Session } from "@/auth/session";
-import type { PendingSetup } from "@/auth/setup";
+import { listMyClinics, type PendingSetup } from "@/auth/setup";
 import { getEndedMessage, getEndedNotice, setSession } from "@/auth/store";
 import type { RustMessage } from "@/i18n/message";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -300,10 +300,26 @@ export function LoginPage() {
 
 export function RegisterPage() {
   const mode = useContext(ModeContext);
+  const setupSteps = useContext(SetupContext);
   const navigate = useNavigate();
 
   // Sign-up needs the server.
   if (mode !== "online" && mode !== "setup") return <Navigate to="/login" replace />;
 
-  return <RegisterForm onRegistered={(username) => navigate({ to: "/login", search: { registered: username } })} />;
+  async function onRegistered(username: string, password: string) {
+    // First start: straight on to the clinic step (a new account has no clinic yet),
+    // without typing the password again.
+    if (mode === "setup") {
+      try {
+        setupSteps.start({ username, password, clinics: await listMyClinics(username, password) });
+        return;
+      } catch (e) {
+        // The account exists anyway: logging in shows what is wrong.
+        console.warn("Could not list the new account's clinics:", e);
+      }
+    }
+    await navigate({ to: "/login", search: { registered: username } });
+  }
+
+  return <RegisterForm onRegistered={onRegistered} />;
 }

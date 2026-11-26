@@ -12,7 +12,8 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 
 interface RegisterFormProps {
-  onRegistered: (username: string) => void;
+  /** The account exists now; `password` is what was just typed, for the first start's clinic step. */
+  onRegistered: (username: string, password: string) => Promise<void> | void;
 }
 
 export function RegisterForm({ onRegistered }: RegisterFormProps) {
@@ -39,10 +40,12 @@ export function RegisterForm({ onRegistered }: RegisterFormProps) {
         identity: values.nationalId,
         phone: values.phone,
       });
-      onRegistered(values.username);
     } catch (e) {
       setError(toRustMessage(e));
+      return;
     }
+    // Kept busy until the next screen is ready.
+    await onRegistered(values.username, values.password);
   }
 
   return (
