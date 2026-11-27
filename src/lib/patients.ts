@@ -22,6 +22,8 @@ export interface PatientInput extends PersonIdentityInput {
   birthDate: string;
   gender: Gender;
   phone: string;
+  /** Optional; "" for none. */
+  email: string;
   address: string;
   medicalNotes: string;
 }
@@ -36,6 +38,7 @@ export interface Patient {
   birthDate: string;
   gender: Gender;
   phone: string;
+  email: string;
   address: string;
   medicalNotes: string;
   /** Unix milliseconds. */
@@ -76,6 +79,7 @@ export interface PatientHistory {
   birthDate: string;
   gender: Gender;
   phone: string;
+  email: string;
   address: string;
   medicalNotes: string;
   /** Newest first. */

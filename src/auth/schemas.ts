@@ -34,10 +34,12 @@ export type LoginValues = z.infer<typeof loginSchema>;
 
 const phone = z.string().trim().regex(PHONE_PATTERN, message("setup.validation.phoneFormat"));
 /** Optional: empty, or an email address of at most 254 characters (the server's rule). */
-const email = z
-  .string()
-  .trim()
-  .refine((v) => v === "" || (v.length <= 254 && z.email().safeParse(v).success), message("setup.validation.emailFormat"));
+const optionalEmail = (error: ParseKeys) =>
+  z
+    .string()
+    .trim()
+    .refine((v) => v === "" || (v.length <= 254 && z.email().safeParse(v).success), error);
+const email = optionalEmail(message("setup.validation.emailFormat"));
 // Typed in any case, with spaces or dashes; sent the way the server takes it.
 const identityCode = z
   .string()
@@ -142,6 +144,7 @@ export const patientSchema = z.object({
     .string()
     .transform((v) => v.replace(/[\s-]/g, ""))
     .pipe(z.string().refine((v) => v === "" || PHONE_PATTERN.test(v), message("patients.errors.invalidPhone"))),
+  email: optionalEmail(message("patients.errors.invalidEmail")),
   address: z.string().trim(),
   medicalNotes: z.string().trim(),
 });

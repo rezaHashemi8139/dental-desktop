@@ -226,6 +226,7 @@ function PatientDetails({
     { label: t("patients.fields.birthDate"), value: birthDate },
     { label: t("patients.fields.gender"), value: genderLabel },
     { label: t("patients.fields.phone"), value: patient.phone || null, latin: true },
+    { label: t("patients.fields.email"), value: patient.email || null, latin: true },
     { label: t("patients.fields.address"), value: patient.address || null },
   ];
 
@@ -270,7 +271,7 @@ function PatientDetails({
               {/* Latin text keeps its own direction but lines up with the rest. */}
               <dd
                 dir={row.latin && row.value ? "ltr" : undefined}
-                className={row.latin && row.value ? "rtl:text-end" : "whitespace-pre-wrap"}
+                className={row.latin && row.value ? "break-all rtl:text-end" : "whitespace-pre-wrap"}
               >
                 {row.value ?? <span className="text-muted-foreground">{t("patients.notGiven")}</span>}
               </dd>

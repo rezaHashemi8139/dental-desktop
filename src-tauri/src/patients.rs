@@ -76,6 +76,45 @@ fn check_phone(phone: &str) -> Result<String, Message> {
     }
 }
 
+/// Empty, or an email address the server takes (Patient.email in
+/// dental-server/proto/dental/v1/patient.proto). Checked here, a little more
+/// strictly than the server, because one address it refuses would fail every
+/// push of the clinic's changes.
+fn check_email(email: &str) -> Result<String, Message> {
+    let email = email.trim();
+    if email.is_empty() || is_email(email) {
+        Ok(email.to_owned())
+    } else {
+        Err(err("patients.errors.invalidEmail"))
+    }
+}
+
+/// A plain address such as name@example.com: at most 254 characters; a local part
+/// of up to 64 of the usual characters, without leading, trailing or double dots;
+/// and a domain of at least two dot-separated labels (letters, digits and inner
+/// hyphens, up to 63 each), whose last one is not all digits.
+fn is_email(email: &str) -> bool {
+    const LOCAL_SYMBOLS: &str = ".!#$%&'*+/=?^_`{|}~-";
+    let Some((local, domain)) = email.split_once('@') else {
+        return false;
+    };
+    let local_ok = (1..=64).contains(&local.len())
+        && !local.starts_with('.')
+        && !local.ends_with('.')
+        && !local.contains("..")
+        && local.chars().all(|c| c.is_ascii_alphanumeric() || LOCAL_SYMBOLS.contains(c));
+    let labels: Vec<&str> = domain.split('.').collect();
+    let domain_ok = labels.len() >= 2
+        && labels.iter().all(|label| {
+            (1..=63).contains(&label.len())
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        })
+        && !labels.last().is_some_and(|tld| tld.chars().all(|c| c.is_ascii_digit()));
+    email.len() <= 254 && local_ok && domain_ok
+}
+
 /// A Gregorian "YYYY-MM-DD" that exists, or empty.
 fn check_date(date: &str) -> Result<String, Message> {
     let date = latin_digits(date.trim());
@@ -135,6 +174,9 @@ pub struct PatientInput {
     pub gender: String,
     #[serde(default)]
     pub phone: String,
+    /// Optional; empty for none.
+    #[serde(default)]
+    pub email: String,
     #[serde(default)]
     pub address: String,
     #[serde(default)]
@@ -153,6 +195,8 @@ pub struct PatientRecord {
     pub birth_date: String,
     pub gender: String,
     pub phone: String,
+    /// Empty for none.
+    pub email: String,
     pub address: String,
     pub medical_notes: String,
     /// Unix milliseconds.
@@ -162,8 +206,8 @@ pub struct PatientRecord {
     pub sync_state: String,
 }
 
-const PATIENT_COLUMNS: &str =
-    "id, identity, first_name, last_name, birth_date, gender, phone, address, medical_notes, created_at, updated_at, sync_state";
+const PATIENT_COLUMNS: &str = "id, identity, first_name, last_name, birth_date, gender, phone, address, medical_notes, \
+     created_at, updated_at, sync_state, email";
 
 fn patient_from_row(row: &Row) -> rusqlite::Result<PatientRecord> {
     Ok(PatientRecord {
@@ -179,6 +223,7 @@ fn patient_from_row(row: &Row) -> rusqlite::Result<PatientRecord> {
         created_at: row.get(9)?,
         updated_at: row.get(10)?,
         sync_state: row.get(11)?,
+        email: row.get(12)?,
     })
 }
 
@@ -191,6 +236,7 @@ struct CheckedPatient {
     birth_date: String,
     gender: String,
     phone: String,
+    email: String,
     address: String,
     medical_notes: String,
 }
@@ -209,6 +255,7 @@ fn check_patient(input: &PatientInput) -> Result<CheckedPatient, Message> {
         birth_date: check_date(&input.birth_date)?,
         gender,
         phone: check_phone(&input.phone)?,
+        email: check_email(&input.email)?,
         address: optional(&input.address, MAX_ADDRESS_CHARS)?,
         medical_notes: optional(&input.medical_notes, MAX_NOTES_CHARS)?,
     })
@@ -275,12 +322,13 @@ pub fn save_patient(db: &Connection, id: Option<&str>, input: &PatientInput, now
         patient.address,
         patient.medical_notes,
         updated_at,
+        patient.email,
     ];
     if previous.is_some() {
         // A patient the server refused was never stored there: still new.
         tx.execute(
             "UPDATE patients SET identity = ?2, first_name = ?3, last_name = ?4, birth_date = ?5, gender = ?6,
-                phone = ?7, address = ?8, medical_notes = ?9, updated_at = ?10,
+                phone = ?7, address = ?8, medical_notes = ?9, updated_at = ?10, email = ?11,
                 sync_state = CASE sync_state WHEN 'new' THEN 'new' WHEN 'rejected' THEN 'new' ELSE 'changed' END
              WHERE id = ?1",
             values,
@@ -288,8 +336,8 @@ pub fn save_patient(db: &Connection, id: Option<&str>, input: &PatientInput, now
     } else {
         tx.execute(
             "INSERT INTO patients (id, identity, first_name, last_name, birth_date, gender, phone, address,
-                medical_notes, updated_at, created_at, sync_state)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10, 'new')",
+                medical_notes, updated_at, created_at, sync_state, email)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10, 'new', ?11)",
             values,
         )
     }
@@ -511,6 +559,7 @@ pub struct PatientHistory {
     pub birth_date: String,
     pub gender: String,
     pub phone: String,
+    pub email: String,
     pub address: String,
     pub medical_notes: String,
     /// Newest first.
@@ -549,6 +598,7 @@ pub fn history_from_proto(response: crate::proto::GetPatientHistoryResponse) -> 
             _ => String::new(),
         },
         phone: patient.phone,
+        email: patient.email,
         address: patient.address,
         medical_notes: patient.medical_notes,
         treatments: response
@@ -589,6 +639,7 @@ mod tests {
             birth_date: "1990-02-28".into(),
             gender: "female".into(),
             phone: "0912 123 4567".into(),
+            email: " sara@example.com ".into(),
             address: String::new(),
             medical_notes: "Penicillin allergy".into(),
         }
@@ -624,6 +675,7 @@ mod tests {
         assert_eq!(saved.identity, SARA);
         assert_eq!(saved.first_name, "Sara");
         assert_eq!(saved.phone, "09121234567");
+        assert_eq!(saved.email, "sara@example.com", "trimmed");
         assert_eq!(saved.sync_state, SYNC_NEW);
         assert_eq!(saved.id, hex::encode(patient_id(SARA)));
 
@@ -659,6 +711,11 @@ mod tests {
         let mut bad = input(SARA);
         bad.phone = "12".into();
         assert_eq!(key(&bad), "patients.errors.invalidPhone");
+        for email in ["sara", "sara@", "@example.com", "sara@example", "sara..a@example.com", "sara@-example.com", "sara@example.123", "sara example@example.com"] {
+            let mut bad = input(SARA);
+            bad.email = email.into();
+            assert_eq!(key(&bad), "patients.errors.invalidEmail", "{email}");
+        }
     }
 
     #[test]

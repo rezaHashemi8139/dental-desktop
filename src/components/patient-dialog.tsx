@@ -21,7 +21,7 @@ const NO_GENDER = "unspecified";
 /** The fields a lookup fills in. */
 type LookedUpFields = Pick<
   Patient,
-  "firstName" | "lastName" | "birthDate" | "gender" | "phone" | "address" | "medicalNotes"
+  "firstName" | "lastName" | "birthDate" | "gender" | "phone" | "email" | "address" | "medicalNotes"
 >;
 
 const EMPTY_FIELDS: LookedUpFields = {
@@ -30,6 +30,7 @@ const EMPTY_FIELDS: LookedUpFields = {
   birthDate: "",
   gender: "",
   phone: "",
+  email: "",
   address: "",
   medicalNotes: "",
 };
@@ -117,6 +118,7 @@ function PatientForm({
       birthDate: patient?.birthDate ?? "",
       gender: patient?.gender ?? "",
       phone: patient?.phone ?? "",
+      email: patient?.email ?? "",
       address: patient?.address ?? "",
       medicalNotes: patient?.medicalNotes ?? "",
     },
@@ -129,6 +131,7 @@ function PatientForm({
     setValue("birthDate", found.birthDate, options);
     setValue("gender", found.gender, options);
     setValue("phone", found.phone, options);
+    setValue("email", found.email, options);
     setValue("address", found.address, options);
     setValue("medicalNotes", found.medicalNotes, options);
   }
@@ -184,6 +187,7 @@ function PatientForm({
           birthDate: values.birthDate,
           gender: values.gender,
           phone: values.phone,
+          email: values.email,
           address: values.address,
           medicalNotes: values.medicalNotes,
         },
@@ -277,6 +281,16 @@ function PatientForm({
           {...register("phone")}
         />
       </div>
+      <FormField
+        id="patient-email"
+        type="email"
+        label={t("patients.fields.email")}
+        error={fieldError(errors.email)}
+        autoComplete="off"
+        maxLength={254}
+        latin
+        {...register("email")}
+      />
       <Controller
         control={control}
         name="birthDate"

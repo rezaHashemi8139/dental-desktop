@@ -266,6 +266,8 @@ const MIGRATIONS: &[Migration] = &[
         updated_at INTEGER NOT NULL,      -- unix milliseconds
         PRIMARY KEY (user_id, day)        -- the same anywhere: safe to merge (merge_contents)
     );"),
+    // 5: a patient's optional email, synced like their phone ('' for none).
+    Migration::Sql("ALTER TABLE patients ADD COLUMN email TEXT NOT NULL DEFAULT '';"),
 ];
 
 /// Migration 3. Patient ids are now derived from the code alone (patients::patient_id),

@@ -100,6 +100,7 @@ fn patient_to_proto(row: &Row) -> rusqlite::Result<(proto::Patient, i64)> {
         phone: row.get(6)?,
         address: row.get(7)?,
         medical_notes: row.get(8)?,
+        email: row.get(10)?,
         updated_at: Some(timestamp(updated_at)),
     };
     Ok((patient, updated_at))
@@ -128,7 +129,8 @@ pub fn outbox(db: &Connection) -> rusqlite::Result<Outbox> {
     let mut sent = Vec::new();
 
     let mut statement = db.prepare(&format!(
-        "SELECT id, identity, first_name, last_name, birth_date, gender, phone, address, medical_notes, updated_at
+        "SELECT id, identity, first_name, last_name, birth_date, gender, phone, address, medical_notes, updated_at,
+            email
          FROM patients WHERE {WAITING} ORDER BY updated_at LIMIT ?1"
     ))?;
     for row in statement.query_map([BATCH as i64], patient_to_proto)? {
@@ -204,12 +206,13 @@ pub fn apply_pull(db: &Connection, response: &proto::PullResponse, now: i64) -> 
         tx.execute(
             &format!(
                 "INSERT INTO patients (id, identity, first_name, last_name, birth_date, gender, phone, address,
-                    medical_notes, updated_at, created_at, sync_state)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'synced')
+                    medical_notes, updated_at, created_at, sync_state, email)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'synced', ?12)
                  ON CONFLICT (id) DO UPDATE SET
                     first_name = excluded.first_name,
                     last_name = excluded.last_name, birth_date = excluded.birth_date, gender = excluded.gender,
                     phone = excluded.phone, address = excluded.address, medical_notes = excluded.medical_notes,
+                    email = excluded.email,
                     updated_at = excluded.updated_at, sync_state = 'synced'
                  WHERE NOT (patients.{WAITING} AND patients.updated_at > excluded.updated_at)"
             ),
@@ -225,6 +228,7 @@ pub fn apply_pull(db: &Connection, response: &proto::PullResponse, now: i64) -> 
                 patient.medical_notes,
                 millis(&patient.updated_at).unwrap_or(0),
                 now,
+                patient.email,
             ],
         )?;
     }
@@ -504,6 +508,7 @@ mod tests {
             birth_date: String::new(),
             gender: "female".into(),
             phone: String::new(),
+            email: String::new(),
             address: String::new(),
             medical_notes: String::new(),
         }
@@ -594,6 +599,7 @@ mod tests {
             birth_date: String::new(),
             gender: proto::Gender::Female as i32,
             phone: String::new(),
+            email: String::new(),
             address: String::new(),
             medical_notes: String::new(),
             updated_at: Some(timestamp(updated_at)),
@@ -624,9 +630,19 @@ mod tests {
         apply_pull(&db, &response(pulled_patient("Older", 2000), 8), 5).unwrap();
         assert_eq!((first_name(&db), state(&db, "patients")), ("Local".into(), SYNC_CHANGED.into()));
 
-        // A newer change from the server wins over the unsent local one.
-        apply_pull(&db, &response(pulled_patient("Newer", 4000), 9), 5).unwrap();
+        // A newer change from the server wins over the unsent local one, email included.
+        let mut newer = pulled_patient("Newer", 4000);
+        newer.email = "sara@example.com".into();
+        apply_pull(&db, &response(newer, 9), 5).unwrap();
         assert_eq!((first_name(&db), state(&db, "patients")), ("Newer".into(), SYNC_SYNCED.into()));
+        let email: String = db.query_row("SELECT email FROM patients", [], |row| row.get(0)).unwrap();
+        assert_eq!(email, "sara@example.com");
+
+        // Every push sends the email on file: the latest change wins for the whole record.
+        let mut local = patient("Local");
+        local.email = "sara@example.com".into();
+        patients::save_patient(&db, Some(&id), &local, 5000).unwrap();
+        assert_eq!(outbox(&db).unwrap().request.patients[0].email, "sara@example.com");
 
         // A treatment deleted elsewhere arrives as a tombstone.
         let treatment = proto::Treatment {

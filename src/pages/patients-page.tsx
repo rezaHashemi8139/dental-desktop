@@ -122,6 +122,7 @@ export function PatientsPage() {
                       <span className="flex flex-wrap gap-x-3 text-xs text-muted-foreground rtl:justify-end" dir="ltr">
                         <span>{patient.identity}</span>
                         {patient.phone && <span>{patient.phone}</span>}
+                        {patient.email && <span>{patient.email}</span>}
                       </span>
                     </span>
                     <SyncBadge state={patient.syncState} />
