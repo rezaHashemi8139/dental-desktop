@@ -180,7 +180,7 @@ impl Api {
         self.call("AuthService", "GetProfile", &proto::GetProfileRequest {}, Some(token)).await
     }
 
-    /// Changes the logged-in user's full name and phone. A restricted session may call it too.
+    /// Changes the logged-in user's full name, phone and email. A restricted session may call it too.
     pub async fn update_profile(
         &self,
         token: &str,

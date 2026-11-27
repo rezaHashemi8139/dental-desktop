@@ -1,5 +1,5 @@
 //! The logged-in user's own account (dental-server AuthService.GetProfile and
-//! UpdateProfile): the full name and mobile number can be changed; the username
+//! UpdateProfile): the full name, mobile number and email can be changed; the username
 //! and identification code cannot. Needs the server; works with a full online
 //! session and with a restricted one (`auth::BillingSession`).
 
@@ -19,6 +19,8 @@ pub struct Profile {
     /// The identification code (person.rs); empty if the account has none.
     pub identity: String,
     pub phone: String,
+    /// Empty when none was given.
+    pub email: String,
 }
 
 impl Profile {
@@ -30,6 +32,7 @@ impl Profile {
             full_name: user.full_name,
             identity: profile.identity.map(|identity| identity.number).unwrap_or_default(),
             phone: profile.phone,
+            email: profile.email,
         })
     }
 }
@@ -40,6 +43,8 @@ impl Profile {
 pub struct ProfileInput {
     pub full_name: String,
     pub phone: String,
+    /// Optional: empty removes the email on file.
+    pub email: String,
 }
 
 fn api_error(error: ApiError) -> Message {
@@ -58,6 +63,7 @@ pub async fn update(ctx: &Context, token: &str, input: &ProfileInput) -> Result<
     let request = proto::UpdateProfileRequest {
         full_name: input.full_name.trim().to_owned(),
         phone: input.phone.trim().to_owned(),
+        email: input.email.trim().to_owned(),
     };
     let response = ctx.api.update_profile(token, &request).await.map_err(api_error)?;
     Profile::from_proto(response.profile)

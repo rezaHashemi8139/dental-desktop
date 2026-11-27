@@ -56,7 +56,7 @@ export function UserMenu({ session }: { session: Session }) {
             <UserAvatar session={session} />
             <span className="flex min-w-0 flex-1 flex-col">
               <span className="truncate font-medium">{session.fullName || session.username}</span>
-              <span dir="ltr" className="truncate text-start text-xs font-normal text-muted-foreground">
+              <span dir="ltr" className="truncate text-xs font-normal text-muted-foreground rtl:text-end">
                 {session.username}
               </span>
             </span>

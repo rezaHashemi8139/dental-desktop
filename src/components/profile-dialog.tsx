@@ -84,7 +84,7 @@ function ProfileForm({ profile, onSaved }: { profile: Profile; onSaved: () => vo
     formState: { errors, isSubmitting },
   } = useForm<ProfileValues>({
     resolver: zodResolver(profileSchema),
-    defaultValues: { fullName: profile.fullName, phone: profile.phone },
+    defaultValues: { fullName: profile.fullName, phone: profile.phone, email: profile.email },
   });
 
   // `values` are already checked and trimmed by the schema.
@@ -134,6 +134,16 @@ function ProfileForm({ profile, onSaved }: { profile: Profile; onSaved: () => vo
         maxLength={16}
         latin
         {...register("phone")}
+      />
+      <FormField
+        id="profile-email"
+        type="email"
+        label={t("setup.fields.ownerEmail")}
+        error={fieldError(errors.email)}
+        autoComplete="email"
+        maxLength={254}
+        latin
+        {...register("email")}
       />
 
       <DialogFooter>

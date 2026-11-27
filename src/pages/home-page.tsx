@@ -31,7 +31,7 @@ export function HomePage() {
     <Card className="w-full max-w-md">
       <CardHeader>
         <CardTitle>{t("home.welcome", { name: session.fullName || session.username })}</CardTitle>
-        <CardDescription dir="ltr" className="text-start">
+        <CardDescription dir="ltr" className="rtl:text-end">
           {session.username}
         </CardDescription>
       </CardHeader>

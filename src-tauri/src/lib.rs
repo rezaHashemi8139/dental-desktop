@@ -580,7 +580,7 @@ async fn get_profile(app: AppHandle, state: State<'_, AuthState>) -> Result<prof
     profile::get(&state.ctx, &token).await.inspect_err(|e| check_update_required(&app, &state, e))
 }
 
-/// Changes the user's full name and phone on the server, then shows the new name
+/// Changes the user's full name, phone and email on the server, then shows the new name
 /// in the open login (and the local list of users) at once. Returns the session.
 #[tauri::command]
 async fn update_profile(

@@ -33,18 +33,24 @@ export const loginSchema = z.object({
 export type LoginValues = z.infer<typeof loginSchema>;
 
 const phone = z.string().trim().regex(PHONE_PATTERN, message("setup.validation.phoneFormat"));
+/** Optional: empty, or an email address of at most 254 characters (the server's rule). */
+const email = z
+  .string()
+  .trim()
+  .refine((v) => v === "" || (v.length <= 254 && z.email().safeParse(v).success), message("setup.validation.emailFormat"));
 // Typed in any case, with spaces or dashes; sent the way the server takes it.
 const identityCode = z
   .string()
   .transform((v) => v.replace(/[\s-]/g, "").toUpperCase())
   .pipe(z.string().regex(IDENTITY_CODE_PATTERN, message("setup.validation.identityCodeFormat")));
 
-/** Every account has an identity (unique across the system) and a mobile number. */
+/** Every account has an identity (unique across the system) and a mobile number; an email is optional. */
 export const registerSchema = z
   .object({
     fullName: requiredText,
     identityCode,
     phone,
+    email,
     username,
     password: newPassword,
     confirmPassword: z.string(),
@@ -65,6 +71,7 @@ export type ChangePasswordValues = z.infer<typeof changePasswordSchema>;
 export const profileSchema = z.object({
   fullName: requiredText,
   phone,
+  email,
 });
 export type ProfileValues = z.infer<typeof profileSchema>;
 

@@ -63,6 +63,8 @@ export interface SignUpInput extends PersonIdentityInput {
   password: string;
   fullName: string;
   phone: string;
+  /** Optional: empty for none. */
+  email: string;
 }
 
 export function signUp(account: SignUpInput): Promise<void> {
@@ -118,12 +120,16 @@ export interface Profile {
   /** The identification code; empty if the account has none. */
   identity: string;
   phone: string;
+  /** Empty when none was given. */
+  email: string;
 }
 
 /** What the user can change about their account; the rest is fixed. */
 export interface ProfileInput {
   fullName: string;
   phone: string;
+  /** Optional: empty removes the email on file. */
+  email: string;
 }
 
 /** Needs the server. */

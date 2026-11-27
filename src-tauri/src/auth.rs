@@ -299,6 +299,8 @@ pub struct SignUpInput {
     /// The identification code (person.rs).
     pub identity: String,
     pub phone: String,
+    /// Optional: empty for none.
+    pub email: String,
 }
 
 /// What the login screen can offer.
@@ -392,6 +394,7 @@ pub async fn sign_up(ctx: &Context, account: &SignUpInput) -> Result<(), Message
         full_name: account.full_name.trim().to_owned(),
         identity: Some(person::to_proto(&account.identity)?),
         phone: account.phone.trim().to_owned(),
+        email: account.email.trim().to_owned(),
     };
     match ctx.api.sign_up(&request).await {
         Ok(_) => Ok(()),
@@ -934,6 +937,7 @@ mod e2e {
             full_name: "Dr. Test".into(),
             identity: identity_code(clock::now_unix() as u64),
             phone: "09121234567".into(),
+            email: "doctor@example.com".into(),
         };
         sign_up(&online, &account).await.unwrap();
         let error = setup::my_clinics(&online, &doctor, "wrong-password").await.err().unwrap();

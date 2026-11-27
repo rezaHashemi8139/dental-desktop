@@ -25,7 +25,15 @@ export function RegisterForm({ onRegistered }: RegisterFormProps) {
     formState: { errors, isSubmitting },
   } = useForm<RegisterValues>({
     resolver: zodResolver(registerSchema),
-    defaultValues: { fullName: "", identityCode: "", phone: "", username: "", password: "", confirmPassword: "" },
+    defaultValues: {
+      fullName: "",
+      identityCode: "",
+      phone: "",
+      email: "",
+      username: "",
+      password: "",
+      confirmPassword: "",
+    },
   });
 
   // `values` are already checked and trimmed by the schema.
@@ -38,6 +46,7 @@ export function RegisterForm({ onRegistered }: RegisterFormProps) {
         fullName: values.fullName,
         identity: values.identityCode,
         phone: values.phone,
+        email: values.email,
       });
     } catch (e) {
       setError(toRustMessage(e));
@@ -82,6 +91,16 @@ export function RegisterForm({ onRegistered }: RegisterFormProps) {
         maxLength={16}
         latin
         {...register("phone")}
+      />
+      <FormField
+        id="register-email"
+        type="email"
+        label={t("setup.fields.ownerEmail")}
+        error={fieldError(errors.email)}
+        autoComplete="email"
+        maxLength={254}
+        latin
+        {...register("email")}
       />
       <FormField
         id="register-username"

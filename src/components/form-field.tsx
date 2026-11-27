@@ -2,22 +2,37 @@ import type { ComponentProps } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { latinKeyDown, latinPaste } from "@/lib/latin-input";
+import { cn } from "@/lib/utils";
 
 interface FormFieldProps extends ComponentProps<typeof Input> {
   id: string;
   label: string;
   hint?: string;
   error?: string | null;
-  /** Types Latin whatever the keyboard layout (see src/lib/latin-input.ts). Also left-to-right. */
+  /**
+   * Types Latin whatever the keyboard layout (see src/lib/latin-input.ts). Also
+   * left-to-right, but still aligned to the page's start side (right in RTL).
+   */
   latin?: boolean;
 }
 
 /** A labelled input with an optional hint and error text. */
-export function FormField({ id, label, hint, error, latin, onKeyDown, onPaste, ...inputProps }: FormFieldProps) {
+export function FormField({
+  id,
+  label,
+  hint,
+  error,
+  latin,
+  onKeyDown,
+  onPaste,
+  className,
+  ...inputProps
+}: FormFieldProps) {
   const describedBy = error ? `${id}-error` : hint ? `${id}-hint` : undefined;
   const latinProps: ComponentProps<typeof Input> = latin
     ? {
         dir: "ltr",
+        className: cn("rtl:text-end", className),
         spellCheck: false,
         autoCapitalize: "off",
         autoCorrect: "off",
@@ -30,7 +45,7 @@ export function FormField({ id, label, hint, error, latin, onKeyDown, onPaste, .
           if (!e.defaultPrevented) latinPaste(e);
         },
       }
-    : { onKeyDown, onPaste };
+    : { className, onKeyDown, onPaste };
 
   return (
     <div className="flex flex-col gap-1.5">
