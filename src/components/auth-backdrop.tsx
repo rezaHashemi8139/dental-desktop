@@ -144,7 +144,8 @@ function step(body: Body, size: number, dt: number, width: number, height: numbe
 }
 
 /**
- * Decoration behind the login, sign-up, setup and lock screens: two soft lights
+ * Decoration behind the login, sign-up, setup and lock screens and the logged-in
+ * pages (src/pages/app-layout.tsx): two soft lights
  * moving in the logo's colours, and flat outline shapes of a dental clinic
  * (teeth, toothbrush, stethoscope, medical crosses...) drifting slowly all over
  * the screen, turning as they go, and gently pushed aside by the mouse. Animated
