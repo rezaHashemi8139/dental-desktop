@@ -132,8 +132,8 @@ fn sync_now(app: AppHandle) {
 }
 
 #[tauri::command]
-fn list_patients(state: State<'_, AuthState>, query: String) -> Result<Vec<patients::PatientRecord>, Message> {
-    with_session(&state, |session| patients::list_patients(&session.db, &query))
+fn list_patients(state: State<'_, AuthState>, query: String, page: u32) -> Result<patients::PatientPage, Message> {
+    with_session(&state, |session| patients::list_patients(&session.db, &query, page))
 }
 
 #[tauri::command]

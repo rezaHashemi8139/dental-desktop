@@ -90,9 +90,19 @@ export interface PatientHistory {
   }[];
 }
 
-/** Patients whose name or identity contains `query`; all (up to 200) if empty. */
-export function listPatients(query = ""): Promise<Patient[]> {
-  return invoke<Patient[]>("list_patients", { query });
+/** One page of the patient list. */
+export interface PatientPage {
+  patients: Patient[];
+  /** Matching patients on every page. */
+  total: number;
+}
+
+/**
+ * Page `page` (from 1) of the patients whose name, identification code or phone
+ * contains `query` (all if empty), by name; PATIENT_PAGE_SIZE per page.
+ */
+export function listPatients(query = "", page = 1): Promise<PatientPage> {
+  return invoke<PatientPage>("list_patients", { query, page });
 }
 
 export function getPatient(id: string): Promise<Patient | null> {
@@ -132,8 +142,8 @@ export function listLocalUsers(): Promise<LocalUser[]> {
   return invoke<LocalUser[]>("list_local_users");
 }
 
-/** Records per list (LIST_LIMIT in src-tauri/src/patients.rs): more means the search should be narrower. */
-export const PATIENT_LIST_LIMIT = 200;
+/** Patients per page of the list (LIST_PAGE_SIZE in src-tauri/src/patients.rs). */
+export const PATIENT_PAGE_SIZE = 20;
 
 /**
  * A patient's treatments in every clinic. Needs an online session; the server

@@ -146,7 +146,7 @@ function PatientForm({
     setError(null);
     setLookup("working");
     try {
-      const local = (await listPatients(key)).find((p) => p.identity === key);
+      const local = (await listPatients(key)).patients.find((p) => p.identity === key);
       if (stale()) return;
       if (local) {
         fillForm(local);

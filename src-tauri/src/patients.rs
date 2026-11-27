@@ -18,8 +18,8 @@ use crate::message::Message;
 use crate::person::{self, latin_digits};
 use crate::secure;
 
-/// Records per list, so a broad search stays quick.
-const LIST_LIMIT: i64 = 200;
+/// Patients per page of the list (PATIENT_PAGE_SIZE in src/lib/patients.ts).
+const LIST_PAGE_SIZE: i64 = 20;
 
 const MAX_NAME_CHARS: usize = 100;
 const MAX_ADDRESS_CHARS: usize = 500;
@@ -300,18 +300,47 @@ pub fn save_patient(db: &Connection, id: Option<&str>, input: &PatientInput, now
     Ok(saved)
 }
 
-/// Patients whose name or identity contains `query` (all if empty), by name.
-pub fn list_patients(db: &Connection, query: &str) -> Result<Vec<PatientRecord>, Message> {
-    let pattern = format!("%{}%", latin_digits(query.trim()).replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
+/// One page of the patient list.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PatientPage {
+    pub patients: Vec<PatientRecord>,
+    /// Matching patients on every page.
+    pub total: i64,
+}
+
+/// A LIKE pattern (with ESCAPE '\') for text that contains `text`.
+fn contains_pattern(text: &str) -> String {
+    format!("%{}%", text.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"))
+}
+
+/// Page `page` (from 1; 0 means 1) of the patients whose name ("first last"),
+/// identification code or phone contains `query` (all if empty), by name. Codes
+/// and phones are stored without spaces or dashes, so they are compared to the
+/// query without those too: "0912 123" finds 09121234567.
+pub fn list_patients(db: &Connection, query: &str, page: u32) -> Result<PatientPage, Message> {
+    let query = latin_digits(query.trim());
+    let compact: String = query.chars().filter(|c| !c.is_whitespace() && *c != '-').collect();
+    let (pattern, compact_pattern) = (contains_pattern(&query), contains_pattern(&compact));
+    let filter = "WHERE ?1 = '%%'
+        OR first_name || ' ' || last_name LIKE ?1 ESCAPE '\\'
+        OR (?2 <> '%%' AND (identity LIKE ?2 ESCAPE '\\' OR phone LIKE ?2 ESCAPE '\\'))";
+
+    let total = db
+        .query_row(&format!("SELECT count(*) FROM patients {filter}"), params![pattern, compact_pattern], |row| row.get(0))
+        .map_err(internal)?;
+    let offset = (i64::from(page.max(1)) - 1) * LIST_PAGE_SIZE;
     let mut statement = db
         .prepare(&format!(
-            "SELECT {PATIENT_COLUMNS} FROM patients
-             WHERE ?1 = '%%' OR first_name || ' ' || last_name LIKE ?1 ESCAPE '\\' OR identity LIKE ?1 ESCAPE '\\'
-             ORDER BY last_name, first_name LIMIT ?2"
+            "SELECT {PATIENT_COLUMNS} FROM patients {filter}
+             ORDER BY last_name, first_name, id LIMIT ?3 OFFSET ?4"
         ))
         .map_err(internal)?;
-    let rows = statement.query_map(params![pattern, LIST_LIMIT], patient_from_row).map_err(internal)?;
-    rows.collect::<rusqlite::Result<_>>().map_err(internal)
+    let rows = statement
+        .query_map(params![pattern, compact_pattern, LIST_PAGE_SIZE, offset], patient_from_row)
+        .map_err(internal)?;
+    let patients = rows.collect::<rusqlite::Result<_>>().map_err(internal)?;
+    Ok(PatientPage { patients, total })
 }
 
 // ---------------------------------------------------------------------------
@@ -605,7 +634,7 @@ mod tests {
         assert_eq!(updated.id, saved.id);
         assert_eq!(updated.first_name, "Sarah");
         assert_eq!(updated.updated_at, 1001, "a change in the same millisecond still moves forward");
-        assert_eq!(list_patients(&db, "").unwrap().len(), 1);
+        assert_eq!(list_patients(&db, "", 1).unwrap().total, 1);
 
         // Once the server has it, a change waits to be sent.
         db.execute("UPDATE patients SET sync_state = 'synced'", []).unwrap();
@@ -630,6 +659,40 @@ mod tests {
         let mut bad = input(SARA);
         bad.phone = "12".into();
         assert_eq!(key(&bad), "patients.errors.invalidPhone");
+    }
+
+    #[test]
+    fn lists_pages_searched_by_name_code_or_phone() {
+        let db = database("list");
+        // 25 patients, "Patient 01" to "Patient 25"; the last one has a phone of its own.
+        for n in 1..=25 {
+            let mut patient = input(&format!("CODE{n:04}"));
+            patient.first_name = "Patient".into();
+            patient.last_name = format!("{n:02}");
+            if n == 25 {
+                patient.phone = "0935 777 8899".into();
+            }
+            save_patient(&db, None, &patient, 1).unwrap();
+        }
+        let names = |page: &PatientPage| page.patients.iter().map(|p| p.last_name.clone()).collect::<Vec<_>>();
+
+        // By name, a page at a time, with the total on every page.
+        let first = list_patients(&db, "", 0).unwrap();
+        assert_eq!((first.total, first.patients.len()), (25, 20));
+        assert_eq!(first.patients[0].last_name, "01");
+        let second = list_patients(&db, "", 2).unwrap();
+        assert_eq!(second.total, 25);
+        assert_eq!(names(&second), ["21", "22", "23", "24", "25"]);
+        assert!(list_patients(&db, "", 3).unwrap().patients.is_empty());
+
+        let count = |query: &str| list_patients(&db, query, 1).unwrap().total;
+        assert_eq!(count("  patient 07 "), 1, "full name, any case");
+        assert_eq!(count("code0012"), 1, "identification code");
+        assert_eq!(count("CODE-001"), 10, "code as typed, with a dash");
+        assert_eq!(count("۰۹۳۵ ۷۷۷"), 1, "phone in Persian digits, with spaces");
+        assert_eq!(count("0912"), 24);
+        assert_eq!(count("%"), 0);
+        assert_eq!(count(" - "), 0, "only spaces and dashes match no code or phone");
     }
 
     #[test]
