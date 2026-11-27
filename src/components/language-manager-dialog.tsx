@@ -143,7 +143,7 @@ export function LanguageManagerDialog({ open, onOpenChange }: LanguageManagerDia
                     disabled={busy !== null}
                     onClick={() => run(language.code, async (code) => restoreLanguage(code))}
                   >
-                    <PlusIcon />
+                    {busy === language.code ? <LoaderCircleIcon className="animate-spin" /> : <PlusIcon />}
                     {t("languageManager.restore")}
                   </Button>
                 </li>

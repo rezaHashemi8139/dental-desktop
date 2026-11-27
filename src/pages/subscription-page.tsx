@@ -52,6 +52,7 @@ export function SubscriptionPage() {
   const [error, setError] = useState<RustMessage | null>(null);
   const [loading, setLoading] = useState(false);
   const [buying, setBuying] = useState<Plan | null>(null);
+  const [loggingOut, setLoggingOut] = useState(false);
   // A payment seen pending here, to tell the owner when it is approved or rejected.
   const watched = useRef<string | null>(null);
   const [decided, setDecided] = useState<Payment | null>(null);
@@ -110,6 +111,7 @@ export function SubscriptionPage() {
   if (!session) return null;
 
   async function logInAgain() {
+    setLoggingOut(true);
     try {
       await logout();
     } finally {
@@ -144,8 +146,8 @@ export function SubscriptionPage() {
           <AlertTitle>{translateMessage(session.billing)}</AlertTitle>
           <AlertDescription>
             <p>{t("billing.restricted.description")}</p>
-            <Button variant="outline" size="sm" className="mt-2" onClick={logInAgain}>
-              <LogInIcon />
+            <Button variant="outline" size="sm" className="mt-2" onClick={logInAgain} disabled={loggingOut}>
+              {loggingOut ? <LoaderCircleIcon className="animate-spin" /> : <LogInIcon />}
               {t("billing.restricted.logInAgain")}
             </Button>
           </AlertDescription>

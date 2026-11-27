@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { getRouteApi, useNavigate } from "@tanstack/react-router";
-import { CloudIcon, CloudOffIcon, GiftIcon, LogOutIcon, ShieldCheckIcon } from "lucide-react";
+import { CloudIcon, CloudOffIcon, GiftIcon, LoaderCircleIcon, LogOutIcon, ShieldCheckIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { logout } from "@/auth/session";
 import { setSession, useSession } from "@/auth/store";
@@ -85,7 +85,7 @@ export function HomePage() {
       </CardContent>
       <CardFooter>
         <Button variant="outline" onClick={handleLogout} disabled={busy}>
-          <LogOutIcon data-icon="inline-start" />
+          {busy ? <LoaderCircleIcon className="animate-spin" /> : <LogOutIcon data-icon="inline-start" />}
           {t("home.logout")}
         </Button>
       </CardFooter>
