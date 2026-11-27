@@ -245,6 +245,34 @@ fn save_work_hours(
     })
 }
 
+/// Replaces `user_id`'s entries of the day [from, to) (its local midnights) with
+/// `entries`: all or none.
+#[tauri::command]
+fn replace_work_day(
+    state: State<'_, AuthState>,
+    user_id: String,
+    from: i64,
+    to: i64,
+    entries: Vec<work_hours::EntryTimes>,
+) -> Result<Vec<work_hours::WorkHoursRecord>, Message> {
+    with_session(&state, |session| {
+        work_hours::replace_day(&session.db, &session.info, &user_id, (from, to), &entries, clock::now_millis())
+    })
+}
+
+/// Records `user_id`'s exit at `at`, cut at the local `midnights` since their entry.
+#[tauri::command]
+fn clock_out(
+    state: State<'_, AuthState>,
+    user_id: String,
+    at: i64,
+    midnights: Vec<i64>,
+) -> Result<Vec<work_hours::WorkHoursRecord>, Message> {
+    with_session(&state, |session| {
+        work_hours::clock_out(&session.db, &session.info, &user_id, at, &midnights, clock::now_millis())
+    })
+}
+
 #[tauri::command]
 fn delete_work_hours(state: State<'_, AuthState>, id: String) -> Result<(), Message> {
     with_session(&state, |session| work_hours::delete(&session.db, &session.info, &id))
@@ -1082,6 +1110,8 @@ pub fn run() {
             list_local_users,
             list_work_hours,
             save_work_hours,
+            replace_work_day,
+            clock_out,
             delete_work_hours,
             save_work_day_note,
             work_hours_summary,

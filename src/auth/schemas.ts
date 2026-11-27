@@ -222,15 +222,46 @@ export type ClearDatabaseValues = z.infer<ReturnType<typeof clearDatabaseSchema>
 /** "HH:MM" from a time input (24 hours). */
 const TIME_PATTERN = /^([01][0-9]|2[0-3]):[0-5][0-9]$/;
 
-/** Rust checks the times again (no future, no overlap: src-tauri/src/work_hours.rs). */
+/** One entry and its exit on the form's day. */
+const workHoursRow = z.object({
+  start: z.string().regex(TIME_PATTERN, message("workHours.validation.timeFormat")),
+  /** "" while still at work. */
+  end: z.string().refine((v) => v === "" || TIME_PATTERN.test(v), message("workHours.validation.timeFormat")),
+});
+
+/** Minutes since midnight of "HH:MM". */
+const minutesOf = (time: string) => Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5));
+
+/**
+ * A day and all its entry/exit rows (none empties the day). An exit of "00:00" is
+ * midnight at the day's end, an empty one means still at work. Rows may not overlap,
+ * and an open row must be the last. Rust checks the times again (no future, no
+ * overlap with other days: src-tauri/src/work_hours.rs).
+ */
 export const workHoursSchema = z.object({
   day: z
     .string()
     .nullable()
     .refine((v) => !!v, message("workHours.validation.dayRequired")),
-  start: z.string().regex(TIME_PATTERN, message("workHours.validation.timeFormat")),
-  /** "" while still at work. */
-  end: z.string().refine((v) => v === "" || TIME_PATTERN.test(v), message("workHours.validation.timeFormat")),
+  rows: z.array(workHoursRow).superRefine((rows, ctx) => {
+    const spans: { index: number; start: number; end: number }[] = [];
+    rows.forEach((row, index) => {
+      if (!TIME_PATTERN.test(row.start) || (row.end !== "" && !TIME_PATTERN.test(row.end))) return;
+      const start = minutesOf(row.start);
+      const end = row.end === "" ? Infinity : row.end === "00:00" ? 24 * 60 : minutesOf(row.end);
+      if (end <= start) {
+        ctx.addIssue({ code: "custom", path: [index, "end"], message: message("workHours.validation.endBeforeStart") });
+      } else {
+        spans.push({ index, start, end });
+      }
+    });
+    spans.sort((a, b) => a.start - b.start);
+    for (let i = 1; i < spans.length; i++) {
+      if (spans[i].start < spans[i - 1].end) {
+        ctx.addIssue({ code: "custom", path: [spans[i].index, "start"], message: message("workHours.validation.overlap") });
+      }
+    }
+  }),
 });
 export type WorkHoursFormValues = z.input<typeof workHoursSchema>;
 export type WorkHoursValues = z.infer<typeof workHoursSchema>;

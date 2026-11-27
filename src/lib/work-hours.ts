@@ -64,8 +64,30 @@ export function saveWorkHours(entry: WorkHoursInput, id?: string): Promise<WorkH
   return invoke<WorkHours>("save_work_hours", { id: id ?? null, entry });
 }
 
-export function deleteWorkHours(id: string): Promise<void> {
-  return invoke("delete_work_hours", { id });
+/** An entry's times, for `replaceWorkDay`. */
+export type EntryTimes = Pick<WorkHoursInput, "startedAt" | "endedAt">;
+
+/**
+ * Replaces `userId`'s entries of the Gregorian `day` ("YYYY-MM-DD") with `entries`:
+ * all or none. Each must lie within the day; an exit at the next midnight ends it.
+ * A refusal names the entry it is about as `params.row`, counted from 1 in the order
+ * given. No entries empties the day.
+ */
+export function replaceWorkDay(userId: string, day: string, entries: EntryTimes[]): Promise<WorkHours[]> {
+  return invoke<WorkHours[]>("replace_work_day", {
+    userId,
+    from: localMidnight(day),
+    to: localMidnight(nextDay(day)),
+    entries,
+  });
+}
+
+/**
+ * Records `userId`'s exit at `at`. An entry from an earlier day ends at that day's
+ * midnight, a new one starts at each midnight since, and the last ends at `at`.
+ */
+export function clockOut(userId: string, at: number, openSince: number): Promise<WorkHours[]> {
+  return invoke<WorkHours[]>("clock_out", { userId, at, midnights: midnightsBetween(openSince, at) });
 }
 
 /** One user's hours in a month, for the overview of everyone. */
@@ -96,6 +118,21 @@ export interface CalendarMonth {
   start: number;
   /** Local midnight of the next month's first day. */
   end: number;
+}
+
+/** The Gregorian day after `iso` ("YYYY-MM-DD"). */
+export function nextDay(iso: string): string {
+  const [year, month, day] = iso.split("-").map(Number);
+  return localIsoDate(new Date(year, month - 1, day + 1));
+}
+
+/** The local midnights after `from` and before `to` (unix milliseconds), oldest first. */
+function midnightsBetween(from: number, to: number): number[] {
+  const midnights: number[] = [];
+  for (let day = nextDay(localIsoDate(from)); localMidnight(day) < to; day = nextDay(day)) {
+    midnights.push(localMidnight(day));
+  }
+  return midnights;
 }
 
 /** Local midnight of a Gregorian "YYYY-MM-DD". */

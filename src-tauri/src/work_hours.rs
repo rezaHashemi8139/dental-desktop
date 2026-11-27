@@ -21,6 +21,8 @@ use crate::secure;
 const MAX_NOTES_CHARS: usize = 1000;
 /// The longest one entry can be: anything longer is surely a typo.
 const MAX_SHIFT_MILLIS: i64 = 24 * 60 * 60 * 1000;
+/// The longest a local day can be (25 hours when clocks go back).
+const MAX_DAY_MILLIS: i64 = 25 * 60 * 60 * 1000;
 
 fn err(key: &str) -> Message {
     Message::new(key)
@@ -224,7 +226,124 @@ pub fn save(
     input: &WorkHoursInput,
     now: i64,
 ) -> Result<WorkHoursRecord, Message> {
-    let user = check_change(db, session, &input.user_id)?;
+    let tx = db.unchecked_transaction().map_err(internal)?;
+    let saved = save_in(&tx, session, id, input, now)?;
+    tx.commit().map_err(internal)?;
+    Ok(saved)
+}
+
+/// An entry's times without whose it is, for one user's day (`replace_day`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EntryTimes {
+    /// Came in, unix milliseconds.
+    pub started_at: i64,
+    /// Left, unix milliseconds; None while still at work.
+    #[serde(default)]
+    pub ended_at: Option<i64>,
+}
+
+/// Replaces `user`'s entries of one day, [from, to) (the local midnights around
+/// it, unix milliseconds), with `entries`: all of them or, if any is refused,
+/// none, and the day stays as it was. Each entry must lie within the day (an exit
+/// at `to` is midnight). The refusal says which one, counted from 1 in the order
+/// given, as `row`. No entries empties the day.
+pub fn replace_day(
+    db: &Connection,
+    session: &SessionInfo,
+    user: &str,
+    (from, to): (i64, i64),
+    entries: &[EntryTimes],
+    now: i64,
+) -> Result<Vec<WorkHoursRecord>, Message> {
+    let user_id = check_change(db, session, user)?;
+    if from >= to || to - from > MAX_DAY_MILLIS {
+        return Err(internal(format!("invalid day {from}..{to}")));
+    }
+    let mut order: Vec<usize> = (0..entries.len()).collect();
+    order.sort_by_key(|&i| entries[i].started_at);
+
+    let tx = db.unchecked_transaction().map_err(internal)?;
+    tx.execute(
+        "DELETE FROM work_hours WHERE user_id = ?1 AND started_at >= ?2 AND started_at < ?3",
+        params![user_id, from, to],
+    )
+    .map_err(internal)?;
+    let mut saved = Vec::with_capacity(entries.len());
+    for i in order {
+        let entry = &entries[i];
+        let row = |e: Message| e.with("row", i + 1);
+        let inside = (from..to).contains(&entry.started_at) && entry.ended_at.is_none_or(|end| end <= to);
+        if !inside {
+            return Err(row(err("workHours.errors.outsideDay")));
+        }
+        let input = WorkHoursInput { user_id: user.to_owned(), started_at: entry.started_at, ended_at: entry.ended_at };
+        saved.push(save_in(&tx, session, None, &input, now).map_err(row)?);
+    }
+    tx.commit().map_err(internal)?;
+    Ok(saved)
+}
+
+/// Records `user`'s exit at `at` (unix milliseconds). If their open entry started
+/// on an earlier day, it is cut at each local midnight between its start and
+/// `at` (`midnights`, from the frontend, which knows the time zone): it ends at
+/// the first, a new entry starts at each, and the last one ends at `at`. Returns
+/// the entries ended, oldest first.
+pub fn clock_out(
+    db: &Connection,
+    session: &SessionInfo,
+    user: &str,
+    at: i64,
+    midnights: &[i64],
+    now: i64,
+) -> Result<Vec<WorkHoursRecord>, Message> {
+    let user_id = check_change(db, session, user)?;
+    if at > now {
+        return Err(err("workHours.errors.inFuture"));
+    }
+    let tx = db.unchecked_transaction().map_err(internal)?;
+    let open = open_entry(&tx, &user_id)?.ok_or_else(|| err("workHours.errors.notAtWork"))?;
+    if at <= open.started_at {
+        return Err(err("workHours.errors.endBeforeStart"));
+    }
+    let mut bounds = vec![open.started_at];
+    for &midnight in midnights {
+        if midnight <= bounds[bounds.len() - 1] || midnight >= at {
+            return Err(internal(format!("invalid midnight {midnight} between {} and {at}", open.started_at)));
+        }
+        bounds.push(midnight);
+    }
+    bounds.push(at);
+
+    let open_id = parse_id(&open.id, "workHours.errors.notFound")?;
+    tx.execute(
+        "UPDATE work_hours SET ended_at = ?2, updated_at = ?3 WHERE id = ?1",
+        params![open_id, bounds[1], now],
+    )
+    .map_err(internal)?;
+    let mut ended = vec![get(&tx, &open_id)?.ok_or_else(|| internal("ended entry not found"))?];
+    for piece in bounds[1..].windows(2) {
+        let id = *secure::random_bytes::<16>();
+        tx.execute(
+            "INSERT INTO work_hours (id, user_id, started_at, ended_at, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
+            params![id, user_id, piece[0], piece[1], now],
+        )
+        .map_err(internal)?;
+        ended.push(get(&tx, &id)?.ok_or_else(|| internal("new entry not found"))?);
+    }
+    tx.commit().map_err(internal)?;
+    Ok(ended)
+}
+
+/// `save` inside a transaction the caller commits.
+fn save_in(
+    tx: &Connection,
+    session: &SessionInfo,
+    id: Option<&str>,
+    input: &WorkHoursInput,
+    now: i64,
+) -> Result<WorkHoursRecord, Message> {
+    let user = check_change(tx, session, &input.user_id)?;
     let (start, end) = (input.started_at, input.ended_at);
     if start <= 0 {
         return Err(err("workHours.errors.invalidStart"));
@@ -241,18 +360,11 @@ pub fn save(
         }
     }
 
-    let tx = db.unchecked_transaction().map_err(internal)?;
     let target = match id {
-        None => {
-            // In order: the last entry's exit comes before any new entry.
-            if open_entry(&tx, &user)?.is_some() {
-                return Err(err("workHours.errors.exitFirst"));
-            }
-            *secure::random_bytes::<16>()
-        }
+        None => *secure::random_bytes::<16>(),
         Some(hex_id) => {
             let target = parse_id(hex_id, "workHours.errors.notFound")?;
-            let existing = get(&tx, &target)?.ok_or_else(|| err("workHours.errors.notFound"))?;
+            let existing = get(tx, &target)?.ok_or_else(|| err("workHours.errors.notFound"))?;
             // An entry stays with whoever worked it.
             if existing.user_id != hex::encode(user) {
                 return Err(err("workHours.errors.notFound"));
@@ -261,20 +373,28 @@ pub fn save(
         }
     };
 
-    // Another entry of the same user sharing any moment with this one. An open
-    // entry lasts until now as far as this goes.
-    let overlaps: bool = tx
+    // Another entry of the same user sharing a minute with this one. Compared in
+    // whole minutes, as the page shows and types times: an entry typed in for the
+    // minute the previous exit was clicked in follows it, though the exit has
+    // seconds and the entry none. An open entry lasts until now as far as this
+    // goes, which also keeps entries in order: nothing new after an entry until
+    // its exit (earlier days can still be filled in).
+    let clash: Option<(bool, i64)> = tx
         .query_row(
-            "SELECT EXISTS (SELECT 1 FROM work_hours
-                WHERE user_id = ?1 AND id <> ?2
-                  AND started_at < coalesce(?4, ?5 + 1)
-                  AND ?3 < coalesce(ended_at, ?5 + 1))",
+            "SELECT ended_at IS NULL, started_at FROM work_hours
+             WHERE user_id = ?1 AND id <> ?2
+               AND started_at / 60000 < coalesce(?4, ?5 + 1) / 60000
+               AND ?3 / 60000 < coalesce(ended_at, ?5 + 1) / 60000
+             ORDER BY ended_at IS NULL DESC LIMIT 1",
             params![user, target, start, end, now],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
+        .optional()
         .map_err(internal)?;
-    if overlaps {
-        return Err(err("workHours.errors.overlap"));
+    match clash {
+        Some((true, open_start)) if start >= open_start => return Err(err("workHours.errors.exitFirst")),
+        Some(_) => return Err(err("workHours.errors.overlap")),
+        None => {}
     }
 
     let values = params![target, user, start, end, now];
@@ -288,9 +408,7 @@ pub fn save(
     }
     .map_err(internal)?;
 
-    let saved = get(&tx, &target)?.ok_or_else(|| internal("saved work hours not found"))?;
-    tx.commit().map_err(internal)?;
-    Ok(saved)
+    get(tx, &target)?.ok_or_else(|| internal("saved work hours not found"))
 }
 
 /// Deletes an entry for good (nothing to sync).
@@ -412,6 +530,101 @@ mod tests {
         assert!((1..=3).contains(&nurse_total.days), "days depend on the time zone");
     }
 
+    fn times(start: i64, end: Option<i64>) -> EntryTimes {
+        EntryTimes { started_at: start, ended_at: end }
+    }
+
+    #[test]
+    fn replaces_a_day_at_once_or_not_at_all() {
+        let db = database("day");
+        let nurse = session(2, ROLE_STAFF);
+        let day = (NOW - 20 * HOUR, NOW + 4 * HOUR);
+        // Another day, untouched by the replacement.
+        let before = save(&db, &nurse, None, &entry(2, NOW - 30 * HOUR, Some(NOW - 28 * HOUR)), NOW).unwrap();
+        save(&db, &nurse, None, &entry(2, NOW - 10 * HOUR, Some(NOW - 9 * HOUR)), NOW).unwrap();
+
+        let rows = [times(NOW - 4 * HOUR, Some(NOW - 3 * HOUR)), times(NOW - 9 * HOUR, Some(NOW - 5 * HOUR)), times(NOW - 2 * HOUR, None)];
+        let saved = replace_day(&db, &nurse, &nurse.user_id, day, &rows, NOW).unwrap();
+        // Stored oldest first, whatever the order given; the last one still open.
+        assert_eq!(saved.iter().map(|e| e.started_at).collect::<Vec<_>>(), [NOW - 9 * HOUR, NOW - 4 * HOUR, NOW - 2 * HOUR]);
+        let found = list(&db, &nurse.user_id, (0, NOW + 4 * HOUR), DAYS).unwrap();
+        assert_eq!(found.entries.len(), 4, "the old entry of the day is gone, the other day's kept");
+        assert_eq!(found.entries[0], before);
+        assert!(found.open.is_some());
+
+        // One bad row (overlapping the first given): nothing changes, and the row is named.
+        let rows = [times(NOW - 9 * HOUR, Some(NOW - 5 * HOUR)), times(NOW - 6 * HOUR, Some(NOW - 4 * HOUR))];
+        let refused = replace_day(&db, &nurse, &nurse.user_id, day, &rows, NOW).unwrap_err();
+        assert_eq!((refused.key.as_str(), refused.params["row"].as_u64()), ("workHours.errors.overlap", Some(2)));
+        assert_eq!(list(&db, &nurse.user_id, (0, NOW + 4 * HOUR), DAYS).unwrap().entries.len(), 4);
+
+        // Outside the day: refused. An exit at the day's end (midnight) is inside.
+        let refused = replace_day(&db, &nurse, &nurse.user_id, day, &[times(NOW - 21 * HOUR, Some(NOW - 19 * HOUR))], NOW);
+        assert_eq!(refused.unwrap_err().key, "workHours.errors.outsideDay");
+        let past_day = (NOW - 48 * HOUR, NOW - 24 * HOUR);
+        replace_day(&db, &nurse, &nurse.user_id, past_day, &[times(NOW - 26 * HOUR, Some(NOW - 24 * HOUR))], NOW).unwrap();
+
+        // No rows empties the day.
+        replace_day(&db, &nurse, &nurse.user_id, day, &[], NOW).unwrap();
+        let left = list(&db, &nurse.user_id, day, DAYS).unwrap();
+        assert!(left.entries.is_empty() && left.open.is_none());
+
+        // Another user's day: staff cannot.
+        let doctor = hex::encode([1u8; 16]);
+        assert_eq!(replace_day(&db, &nurse, &doctor, day, &[], NOW).unwrap_err().key, "workHours.errors.notAllowed");
+    }
+
+    #[test]
+    fn clocking_out_the_next_day_splits_at_midnight() {
+        let db = database("midnight");
+        let nurse = session(2, ROLE_STAFF);
+        let midnight = NOW - 6 * HOUR;
+        let open = save(&db, &nurse, None, &entry(2, midnight - 3 * HOUR, None), NOW).unwrap();
+
+        let ended = clock_out(&db, &nurse, &nurse.user_id, NOW - 2 * HOUR, &[midnight], NOW).unwrap();
+        let spans: Vec<_> = ended.iter().map(|e| (e.started_at, e.ended_at)).collect();
+        assert_eq!(spans, [(midnight - 3 * HOUR, Some(midnight)), (midnight, Some(NOW - 2 * HOUR))]);
+        assert_eq!(ended[0].id, open.id, "the open entry ends at midnight");
+        assert_eq!(clock_out(&db, &nurse, &nurse.user_id, NOW, &[], NOW).unwrap_err().key, "workHours.errors.notAtWork");
+
+        // Several days: cut at each midnight. The same day: no cut.
+        save(&db, &nurse, None, &entry(2, NOW - HOUR, None), NOW).unwrap();
+        assert_eq!(clock_out(&db, &nurse, &nurse.user_id, NOW, &[], NOW).unwrap().len(), 1);
+        let db = database("midnights");
+        save(&db, &nurse, None, &entry(2, NOW - 50 * HOUR, None), NOW).unwrap();
+        let ended = clock_out(&db, &nurse, &nurse.user_id, NOW, &[NOW - 48 * HOUR, NOW - 24 * HOUR], NOW).unwrap();
+        assert_eq!(ended.len(), 3);
+        // Midnights out of place are a bug, not the user's.
+        let db = database("bad-midnight");
+        save(&db, &nurse, None, &entry(2, NOW - HOUR, None), NOW).unwrap();
+        assert_eq!(clock_out(&db, &nurse, &nurse.user_id, NOW, &[NOW - 2 * HOUR], NOW).unwrap_err().key, "errors.unknown");
+    }
+
+    /// The form keeps only hours and minutes, the buttons the exact moment: an entry
+    /// typed in for the minute an exit was clicked in still follows it.
+    #[test]
+    fn several_entries_a_day_from_buttons_and_form() {
+        let db = database("several");
+        let nurse = session(2, ROLE_STAFF);
+        const MINUTE: i64 = 60 * 1000;
+        let day = NOW - 10 * HOUR; // a whole minute
+        // Clock in and out with the buttons, a few seconds into a minute.
+        let first = save(&db, &nurse, None, &entry(2, day + 5_000, None), NOW).unwrap();
+        save(&db, &nurse, Some(&first.id), &entry(2, day + 5_000, Some(day + 2 * MINUTE + 45_000)), NOW).unwrap();
+        // The next entry typed in with "now" in that same minute: 2 minutes, no seconds.
+        let second = save(&db, &nurse, None, &entry(2, day + 2 * MINUTE, Some(day + 30 * MINUTE)), NOW).unwrap();
+        // And again with the buttons.
+        let third = save(&db, &nurse, None, &entry(2, day + 31 * MINUTE + 1_000, None), NOW).unwrap();
+        save(&db, &nurse, Some(&third.id), &entry(2, day + 31 * MINUTE + 1_000, Some(day + 40 * MINUTE)), NOW).unwrap();
+
+        let found = list(&db, &nurse.user_id, (day, NOW), DAYS).unwrap();
+        assert_eq!(found.entries.len(), 3);
+        assert_eq!(found.entries[1].id, second.id);
+        // A real overlap of a minute or more is still refused.
+        let overlapping = entry(2, day + 29 * MINUTE, Some(day + 35 * MINUTE));
+        assert_eq!(save(&db, &nurse, None, &overlapping, NOW).unwrap_err().key, "workHours.errors.overlap");
+    }
+
     #[test]
     fn entries_come_in_order() {
         let db = database("order");
@@ -420,10 +633,10 @@ mod tests {
         // No new entry before the exit, not even an earlier one typed in.
         let key = |input: WorkHoursInput| save(&db, &nurse, None, &input, NOW).unwrap_err().key;
         assert_eq!(key(entry(2, NOW - HOUR, None)), "workHours.errors.exitFirst");
-        assert_eq!(key(entry(2, NOW - 9 * HOUR, Some(NOW - 8 * HOUR))), "workHours.errors.exitFirst");
+        // Earlier times can still be filled in.
+        save(&db, &nurse, None, &entry(2, NOW - 9 * HOUR, Some(NOW - 8 * HOUR)), NOW).unwrap();
         // After the exit, any number more the same day.
         save(&db, &nurse, Some(&open.id), &entry(2, NOW - 2 * HOUR, Some(NOW - HOUR)), NOW).unwrap();
-        save(&db, &nurse, None, &entry(2, NOW - 9 * HOUR, Some(NOW - 8 * HOUR)), NOW).unwrap();
         save(&db, &nurse, None, &entry(2, NOW - HOUR, None), NOW).unwrap();
     }
 
