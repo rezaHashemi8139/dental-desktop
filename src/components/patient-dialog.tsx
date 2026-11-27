@@ -1,12 +1,12 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { CloudDownloadIcon, LoaderCircleIcon } from "lucide-react";
+import { LoaderCircleIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { patientSchema, type PatientFormValues, type PatientValues } from "@/auth/schemas";
 import { toRustMessage, translateMessage, type RustMessage } from "@/i18n/message";
 import { fieldError } from "@/lib/form";
-import { patientHistory, savePatient, type Gender, type Patient } from "@/lib/patients";
+import { listPatients, patientHistory, savePatient, type Gender, type Patient } from "@/lib/patients";
 import { DateField } from "@/components/date-field";
 import { FormField } from "@/components/form-field";
 import { SelectField } from "@/components/select-field";
@@ -18,10 +18,46 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 /** Select items cannot have an empty value: this one stands for "not given". */
 const NO_GENDER = "unspecified";
 
+/** The fields a lookup fills in. */
+type LookedUpFields = Pick<
+  Patient,
+  "firstName" | "lastName" | "birthDate" | "gender" | "phone" | "address" | "medicalNotes"
+>;
+
+const EMPTY_FIELDS: LookedUpFields = {
+  firstName: "",
+  lastName: "",
+  birthDate: "",
+  gender: "",
+  phone: "",
+  address: "",
+  medicalNotes: "",
+};
+
+/**
+ * Lookup outcomes that are not shown: a new patient, no server, or a code still
+ * being typed are normal while filling in the form.
+ */
+const QUIET_LOOKUP_ERRORS = new Set([
+  "patients.errors.historyNotFound",
+  "patients.errors.historyNeedsServer",
+  "errors.network",
+  "person.errors.invalidIdentityCode",
+]);
+
+/** Lookups that would fail the same way again for the same code. */
+const FINAL_LOOKUP_ERRORS = new Set(["patients.errors.historyNotFound", "person.errors.invalidIdentityCode"]);
+
+/** Roughly how Rust reads a code (person::normalize): enough to tell codes apart here. */
+function lookupKey(code: string): string {
+  return code.replace(/[\s-]/g, "").toUpperCase();
+}
+
 /**
  * Adds a patient, or edits one (`patient`). Saved on this computer first and
- * synced by Rust (src/lib/patients.ts). A new patient can be looked up on the
- * server by identification code, to fill in what another clinic already recorded.
+ * synced by Rust (src/lib/patients.ts). When the code field of a new patient is
+ * left, the code is looked up among this computer's patients, then on the server,
+ * to fill in what this or another clinic already recorded.
  */
 export function PatientDialog({
   open,
@@ -55,7 +91,14 @@ function PatientForm({
 }) {
   const { t } = useTranslation();
   const [error, setError] = useState<RustMessage | null>(null);
-  const [lookup, setLookup] = useState<"idle" | "working" | "found">("idle");
+  // "local": found on this computer; "server": found on the server.
+  const [lookup, setLookup] = useState<"idle" | "working" | "local" | "server">("idle");
+  // The code last looked up: the server logs every lookup, so leaving the field
+  // again with the same code does not repeat it.
+  const lastLookup = useRef<string | null>(null);
+  // The other fields hold a looked-up patient: cleared if the code then changes
+  // to one that is not found, so one person's details never stay under another's code.
+  const filled = useRef(false);
   // The server has this patient: their code is fixed (patients::save_patient).
   const identityLocked = !!patient && (patient.syncState === "synced" || patient.syncState === "changed");
   const {
@@ -79,23 +122,52 @@ function PatientForm({
     },
   });
 
-  // Fills the form with what the server has for this code. The server logs the lookup.
+  function fillForm(found: LookedUpFields) {
+    const options = { shouldValidate: true, shouldDirty: true } as const;
+    setValue("firstName", found.firstName, options);
+    setValue("lastName", found.lastName, options);
+    setValue("birthDate", found.birthDate, options);
+    setValue("gender", found.gender, options);
+    setValue("phone", found.phone, options);
+    setValue("address", found.address, options);
+    setValue("medicalNotes", found.medicalNotes, options);
+  }
+
+  // Run on leaving the code field. A patient already on this computer is filled in
+  // from here (saving then updates them, see savePatient); otherwise the server is
+  // asked, which logs the lookup.
   async function lookUp() {
+    const identity = getValues("identityCode");
+    const key = lookupKey(identity);
+    if (key === "" || key === lastLookup.current) return;
+    lastLookup.current = key;
+    // The code changed while waiting: that answer is for another patient.
+    const stale = () => lastLookup.current !== key || lookupKey(getValues("identityCode")) !== key;
     setError(null);
     setLookup("working");
     try {
-      const found = await patientHistory({ identity: getValues("identityCode") });
-      const fill = { shouldValidate: true, shouldDirty: true } as const;
-      setValue("firstName", found.firstName, fill);
-      setValue("lastName", found.lastName, fill);
-      setValue("birthDate", found.birthDate, fill);
-      setValue("gender", found.gender, fill);
-      setValue("phone", found.phone, fill);
-      setValue("address", found.address, fill);
-      setValue("medicalNotes", found.medicalNotes, fill);
-      setLookup("found");
+      const local = (await listPatients(key)).find((p) => p.identity === key);
+      if (stale()) return;
+      if (local) {
+        fillForm(local);
+        filled.current = true;
+        setLookup("local");
+        return;
+      }
+      const found = await patientHistory({ identity });
+      if (stale()) return;
+      fillForm(found);
+      filled.current = true;
+      setLookup("server");
     } catch (e) {
-      setError(toRustMessage(e));
+      if (stale()) return;
+      const message = toRustMessage(e);
+      if (!FINAL_LOOKUP_ERRORS.has(message.key)) lastLookup.current = null; // try again next time
+      if (!QUIET_LOOKUP_ERRORS.has(message.key)) setError(message);
+      if (filled.current) {
+        fillForm(EMPTY_FIELDS);
+        filled.current = false;
+      }
       setLookup("idle");
     }
   }
@@ -138,31 +210,28 @@ function PatientForm({
         </DialogDescription>
       </DialogHeader>
 
-      <div className="flex items-end gap-2">
-        <div className="flex-1">
-          <FormField
-            id="patient-identity-code"
-            label={t("patients.fields.identityCode")}
-            hint={identityLocked ? t("patients.errors.identityLocked") : t("patients.hints.identityCode")}
-            error={fieldError(errors.identityCode)}
-            maxLength={24}
-            readOnly={identityLocked}
-            autoFocus={!patient}
-            latin
-            {...register("identityCode")}
-          />
-        </div>
-        {!patient && (
-          // Lined up with the input, above its hint.
-          <Button type="button" variant="outline" className="mb-5.5" onClick={lookUp} disabled={lookup === "working"}>
-            {lookup === "working" ? <LoaderCircleIcon className="animate-spin" /> : <CloudDownloadIcon data-icon="inline-start" />}
-            {lookup === "working" ? t("patients.lookup.working") : t("patients.lookup.button")}
-          </Button>
-        )}
-      </div>
-      {lookup === "found" && (
+      <FormField
+        id="patient-identity-code"
+        label={t("patients.fields.identityCode")}
+        hint={
+          identityLocked
+            ? t("patients.errors.identityLocked")
+            : lookup === "working"
+              ? t("patients.lookup.working")
+              : t("patients.hints.identityCode")
+        }
+        error={fieldError(errors.identityCode)}
+        maxLength={24}
+        readOnly={identityLocked}
+        autoFocus={!patient}
+        latin
+        {...register("identityCode", patient ? undefined : { onBlur: () => void lookUp() })}
+      />
+      {(lookup === "local" || lookup === "server") && (
         <Alert>
-          <AlertDescription>{t("patients.lookup.found")}</AlertDescription>
+          <AlertDescription>
+            {lookup === "local" ? t("patients.lookup.foundLocal") : t("patients.lookup.found")}
+          </AlertDescription>
         </Alert>
       )}
 
