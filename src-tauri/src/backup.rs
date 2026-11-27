@@ -382,6 +382,7 @@ mod tests {
             online: true,
             offline_until: 0,
             billing: None,
+            locked: false,
         }
     }
 

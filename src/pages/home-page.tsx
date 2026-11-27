@@ -1,9 +1,8 @@
-import { useState } from "react";
-import { getRouteApi, useNavigate } from "@tanstack/react-router";
+import { getRouteApi } from "@tanstack/react-router";
 import { CloudIcon, CloudOffIcon, GiftIcon, LoaderCircleIcon, LogOutIcon, ShieldCheckIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { logout } from "@/auth/session";
-import { setSession, useSession } from "@/auth/store";
+import { useSession } from "@/auth/store";
+import { useLogout } from "@/auth/use-logout";
 import { useFormatDate } from "@/i18n/calendar";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -16,11 +15,10 @@ export function HomePage() {
   const { t } = useTranslation();
   // Live: an offline session that reconnects shows as online right away.
   const session = useSession();
-  const navigate = useNavigate();
   // Right after a first clinic started a free trial (src/pages/auth-layout.tsx).
   const { trialPlan, trialEndsAt } = homeRoute.useSearch();
   const formatDate = useFormatDate();
-  const [busy, setBusy] = useState(false);
+  const { logOut, busy } = useLogout();
   // The app layout leaves for /login when there is no session.
   if (!session) return null;
 
@@ -28,17 +26,6 @@ export function HomePage() {
   const offlineUntil = formatDate(session.offlineUntil * 1000, { dateStyle: "medium", timeStyle: "short" });
   const roleKey = `roles.${session.role}`;
   const role = (t as unknown as (key: string, options: object) => string)(roleKey, { defaultValue: session.role });
-
-  async function handleLogout() {
-    setBusy(true);
-    try {
-      await logout();
-    } finally {
-      // Clear first: the /login guard sends logged-in users back to /home.
-      setSession(null);
-      navigate({ to: "/login", replace: true });
-    }
-  }
 
   return (
     <Card className="w-full max-w-md">
@@ -84,7 +71,7 @@ export function HomePage() {
         </div>
       </CardContent>
       <CardFooter>
-        <Button variant="outline" onClick={handleLogout} disabled={busy}>
+        <Button variant="outline" onClick={logOut} disabled={busy}>
           {busy ? <LoaderCircleIcon className="animate-spin" /> : <LogOutIcon data-icon="inline-start" />}
           {t("home.logout")}
         </Button>

@@ -8,6 +8,7 @@ import { ThemeSwitcher } from "@/components/theme-switcher";
 import { UpdateButton } from "@/components/update-button";
 import { UpdateRequiredScreen } from "@/components/update-required-screen";
 import { useUpdate } from "@/lib/update";
+import { version } from "../../package.json";
 
 /**
  * Header around every page; the pages fill the rest of the window. While this
@@ -22,6 +23,7 @@ export function RootLayout() {
         <div className="flex items-center gap-2">
           <img src="/logo.svg" alt="" className="size-6" />
           <h1 className="text-sm font-semibold">{t("app.title")}</h1>
+          <span className="text-xs text-muted-foreground">{t("settings.about.version", { version })}</span>
         </div>
         <div className="flex items-center gap-2">
           <UpdateButton />

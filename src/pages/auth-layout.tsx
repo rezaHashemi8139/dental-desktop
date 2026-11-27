@@ -83,7 +83,7 @@ function useLiveMode(): ConnectionMode {
 /**
  * /login and /register: what's offered depends on whether the server is reachable,
  * and on a computer that was never set up, the clinic setup comes first. The
- * moving logo behind the cards shows through them (AUTH_CARD).
+ * decoration behind the cards shows through them (AUTH_CARD).
  */
 export function AuthLayout() {
   return (
@@ -97,8 +97,8 @@ export function AuthLayout() {
   );
 }
 
-/** The login screen's cards: see-through and blurred, so the backdrop shows behind the form. */
-const AUTH_CARD = "bg-card/80 backdrop-blur-md";
+/** The login and lock screens' cards: see-through and blurred, so the backdrop shows behind the form. */
+export const AUTH_CARD = "bg-card/55 backdrop-blur-md shadow-lg";
 
 function AuthScreen() {
   const { t } = useTranslation();
@@ -168,7 +168,8 @@ function AuthScreen() {
     <ModeContext.Provider value={mode}>
       <SetupContext.Provider value={setupSteps}>
         <Card className={cn("w-full max-w-sm", AUTH_CARD)}>
-          <CardHeader>
+          <CardHeader className="justify-items-center text-center">
+            <img src="/logo.svg" alt="" className="mb-2 size-16" />
             <CardTitle>{t(register ? "auth.register.title" : "auth.login.title")}</CardTitle>
             <CardDescription>{t(register ? "auth.register.description" : "auth.login.description")}</CardDescription>
           </CardHeader>

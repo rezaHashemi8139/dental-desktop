@@ -11,6 +11,7 @@ mod lockdown;
 mod message;
 mod patients;
 mod person;
+mod profile;
 mod proto;
 mod secure;
 mod settings;
@@ -54,10 +55,18 @@ struct AuthState {
     updates: update::Updates,
 }
 
-/// Runs `work` on the open session. For commands that read or change clinic data.
+/// The error for a call refused while the session is locked (`lock_session`).
+const LOCKED_ERROR: &str = "auth.errors.locked";
+
+/// Runs `work` on the open session. For commands that read or change clinic data:
+/// refused while the session is locked.
 fn with_session<T>(state: &AuthState, work: impl FnOnce(&Session) -> Result<T, Message>) -> Result<T, Message> {
     let guard = state.session.lock().unwrap();
-    work(guard.as_ref().ok_or_else(|| Message::new("errors.notLoggedIn"))?)
+    let session = guard.as_ref().ok_or_else(|| Message::new("errors.notLoggedIn"))?;
+    if session.info.locked {
+        return Err(Message::new(LOCKED_ERROR));
+    }
+    work(session)
 }
 
 /// Syncs in the background: after a local change, a login, and every connectivity
@@ -407,12 +416,16 @@ async fn end_sessions(state: &AuthState) {
 
 /// The owner's server token: the restricted session's, or a full online session's.
 fn billing_token(state: &AuthState) -> Result<String, Message> {
+    server_token(state, "billing.errors.needsServer")
+}
+
+/// The open login's server token: the restricted session's, or a full online
+/// session's (not while locked). `offline_error` is the error for an offline session.
+fn server_token(state: &AuthState, offline_error: &str) -> Result<String, Message> {
     if let Some(billing) = state.billing.lock().unwrap().as_ref() {
         return Ok(billing.token().to_owned());
     }
-    with_session(state, |session| {
-        session.token().map(str::to_owned).ok_or_else(|| Message::new("billing.errors.needsServer"))
-    })
+    with_session(state, |session| session.token().map(str::to_owned).ok_or_else(|| Message::new(offline_error)))
 }
 
 #[tauri::command]
@@ -456,9 +469,8 @@ async fn cancel_payment(state: State<'_, AuthState>, id: String) -> Result<billi
 }
 
 /// Runs a database action (export, restore, clear) under Rust's own checks,
-/// whatever the UI shows: only for the logged-in manager, and only with their own
-/// account password, checked first. After `MAX_WRONG_PASSWORDS` wrong ones in a
-/// row the session is logged out, and the frontend told as for a revoked session.
+/// whatever the UI shows: only for the logged-in manager, while not locked, and
+/// only with their own account password (`with_account_password`).
 async fn run_database_action<T>(
     app: &AppHandle,
     state: &AuthState,
@@ -469,18 +481,48 @@ async fn run_database_action<T>(
     let Ok(_busy) = state.busy.try_lock() else {
         return Err(Message::new("auth.errors.busy"));
     };
+    with_account_password(app, state, account_password, "a database action", unlocked_manager, action).await
+}
+
+/// The open session, if its user is a manager and it is not locked.
+fn unlocked_manager(session: Option<&Session>) -> Result<&Session, Message> {
+    let session = backup::manager_session(session)?;
+    if session.info.locked {
+        return Err(Message::new(LOCKED_ERROR));
+    }
+    Ok(session)
+}
+
+/// The open session, whatever its state.
+fn open_session(session: Option<&Session>) -> Result<&Session, Message> {
+    session.ok_or_else(|| Message::new("errors.notLoggedIn"))
+}
+
+/// Runs `action` on the open session once the user has proven it is them with
+/// their own account password. `allowed` decides whether the session may do it,
+/// checked before the password and again after (no logout or other login in the
+/// meantime). After `MAX_WRONG_PASSWORDS` wrong ones in a row the session is
+/// logged out, and the frontend told as for a revoked session; `what` names the
+/// action in the log.
+async fn with_account_password<T>(
+    app: &AppHandle,
+    state: &AuthState,
+    password: &str,
+    what: &str,
+    allowed: impl Fn(Option<&Session>) -> Result<&Session, Message>,
+    action: impl FnOnce(&mut Session) -> Result<T, Message>,
+) -> Result<T, Message> {
     let user = {
         let guard = state.session.lock().unwrap();
-        backup::manager_session(guard.as_ref())?.info.clone()
+        allowed(guard.as_ref())?.info.clone()
     };
     // Slow (Argon2id): the session stays free meanwhile.
-    let checked = auth::verify_password(&state.ctx, &user, account_password);
+    let checked = auth::verify_password(&state.ctx, &user, password);
 
     let ended = {
         let mut guard = state.session.lock().unwrap();
-        // Still the same manager: no logout or other login in the meantime.
-        if backup::manager_session(guard.as_ref())?.info.user_id != user.user_id {
-            return Err(Message::new("database.errors.notAllowed"));
+        if allowed(guard.as_ref())?.info.user_id != user.user_id {
+            return Err(Message::new("errors.notLoggedIn"));
         }
         let session = guard.as_mut().expect("checked above");
         match checked {
@@ -498,11 +540,79 @@ async fn run_database_action<T>(
 
     let message = Message::new("identity.errors.tooManyAttempts").with("max", auth::MAX_WRONG_PASSWORDS);
     if let Some(session) = ended {
-        eprintln!("Logged out: {} wrong passwords in a row for a database action", auth::MAX_WRONG_PASSWORDS);
+        eprintln!("Logged out: {} wrong passwords in a row for {what}", auth::MAX_WRONG_PASSWORDS);
         auth::logout(&state.ctx, session).await;
         let _ = app.emit(SESSION_ENDED_EVENT, message.clone());
     }
     Err(message)
+}
+
+// --- Locking (the lock screen) ---------------------------------------------
+
+/// Locks the open login: the lock screen shows, and clinic data stays closed
+/// (`with_session`) until `unlock_session`. The database stays open and syncing
+/// goes on. Only a full session can be locked.
+#[tauri::command]
+fn lock_session(state: State<'_, AuthState>) -> Result<SessionInfo, Message> {
+    let mut guard = state.session.lock().unwrap();
+    let session = guard.as_mut().ok_or_else(|| Message::new("errors.notLoggedIn"))?;
+    session.info.locked = true;
+    Ok(session.info.clone())
+}
+
+/// Opens a locked login again with the user's own password. Wrong ones count as
+/// for database actions: after `MAX_WRONG_PASSWORDS` in a row, it logs out.
+#[tauri::command]
+async fn unlock_session(app: AppHandle, state: State<'_, AuthState>, password: String) -> Result<SessionInfo, Message> {
+    let password = Zeroizing::new(password);
+    with_account_password(&app, &state, &password, "unlocking", open_session, |session| {
+        session.info.locked = false;
+        Ok(session.info.clone())
+    })
+    .await
+}
+
+// --- The user's own account (profile.rs) -----------------------------------
+
+#[tauri::command]
+async fn get_profile(app: AppHandle, state: State<'_, AuthState>) -> Result<profile::Profile, Message> {
+    let token = Zeroizing::new(server_token(&state, "account.errors.needsServer")?);
+    profile::get(&state.ctx, &token).await.inspect_err(|e| check_update_required(&app, &state, e))
+}
+
+/// Changes the user's full name and phone on the server, then shows the new name
+/// in the open login (and the local list of users) at once. Returns the session.
+#[tauri::command]
+async fn update_profile(
+    app: AppHandle,
+    state: State<'_, AuthState>,
+    profile: profile::ProfileInput,
+) -> Result<SessionInfo, Message> {
+    let token = Zeroizing::new(server_token(&state, "account.errors.needsServer")?);
+    let updated =
+        profile::update(&state.ctx, &token, &profile).await.inspect_err(|e| check_update_required(&app, &state, e))?;
+    // Still the same user: no logout or other login in the meantime.
+    let same_user = |info: &SessionInfo| info.username.eq_ignore_ascii_case(&updated.username);
+
+    if let Some(billing) = state.billing.lock().unwrap().as_mut().filter(|b| same_user(&b.info)) {
+        billing.info.full_name = updated.full_name;
+        return Ok(billing.info.clone());
+    }
+    let mut guard = state.session.lock().unwrap();
+    let session = guard.as_mut().filter(|s| same_user(&s.info)).ok_or_else(|| Message::new("errors.notLoggedIn"))?;
+    session.info.full_name = updated.full_name;
+    if let Err(e) = profile::record_full_name(&session.db, &session.info.user_id, &session.info.full_name) {
+        // Written again at the next login anyway.
+        eprintln!("Could not save the new name locally: {e}");
+    }
+    Ok(session.info.clone())
+}
+
+/// Tells the frontend when a server call failed because this version must be updated first.
+fn check_update_required(app: &AppHandle, state: &AuthState, error: &Message) {
+    if error.key == update::REQUIRED_ERROR {
+        update_required_by_server(app, state);
+    }
 }
 
 /// Saves an encrypted copy of the clinic database to `path` (chosen by the user
@@ -738,6 +848,10 @@ pub fn run() {
             login,
             resume_login,
             logout,
+            lock_session,
+            unlock_session,
+            get_profile,
+            update_profile,
             billing_status,
             list_plans,
             quote_payment,

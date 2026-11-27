@@ -8,7 +8,9 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default: "bg-primary text-primary-foreground hover:bg-primary/80",
+        // The logo's teal-to-blue gradient (--brand-start/--brand-end in src/index.css).
+        default:
+          "bg-linear-to-br from-brand-start to-brand-end text-primary-foreground shadow-sm shadow-brand-end/20 hover:brightness-110",
         outline:
           "border-border bg-background hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:border-input dark:bg-input/30 dark:hover:bg-input/50",
         secondary:

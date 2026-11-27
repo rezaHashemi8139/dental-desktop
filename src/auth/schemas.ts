@@ -61,6 +61,19 @@ export const changePasswordSchema = z
   .refine(passwordsMatch, passwordMismatch);
 export type ChangePasswordValues = z.infer<typeof changePasswordSchema>;
 
+/** The user's own account: what can be changed (src/components/profile-dialog.tsx). */
+export const profileSchema = z.object({
+  fullName: requiredText,
+  phone,
+});
+export type ProfileValues = z.infer<typeof profileSchema>;
+
+/** The lock screen: only the password; Rust checks it. */
+export const unlockSchema = z.object({
+  password: required,
+});
+export type UnlockValues = z.infer<typeof unlockSchema>;
+
 // --- First start: the clinic this computer joins (src/pages/clinic-setup.tsx) ---
 
 /** A point picked on the map; null until one is picked. */

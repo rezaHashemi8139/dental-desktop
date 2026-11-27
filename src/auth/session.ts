@@ -22,6 +22,8 @@ export interface Session {
    * and the clinic's data stays locked (src/lib/billing.ts).
    */
   billing: RustMessage | null;
+  /** Locked by the user: the lock screen shows until the password is given (`unlockSession`). */
+  locked: boolean;
 }
 
 /**
@@ -91,6 +93,47 @@ export function resumeLogin(): Promise<Session> {
 
 export function logout(): Promise<void> {
   return invoke("logout");
+}
+
+/**
+ * Locks the open login: the lock screen shows (src/components/lock-screen.tsx)
+ * and Rust refuses clinic data until `unlockSession`. Returns the session.
+ */
+export function lockSession(): Promise<Session> {
+  return invoke<Session>("lock_session");
+}
+
+/**
+ * Opens a locked login with the user's own password. After `MAX_WRONG_PASSWORDS`
+ * wrong ones in a row (src/lib/backup.ts) Rust logs out instead.
+ */
+export function unlockSession(password: string): Promise<Session> {
+  return invoke<Session>("unlock_session", { password });
+}
+
+/** The logged-in user's own account (see Profile in src-tauri/src/profile.rs). */
+export interface Profile {
+  username: string;
+  fullName: string;
+  /** The identification code; empty if the account has none. */
+  identity: string;
+  phone: string;
+}
+
+/** What the user can change about their account; the rest is fixed. */
+export interface ProfileInput {
+  fullName: string;
+  phone: string;
+}
+
+/** Needs the server. */
+export function getProfile(): Promise<Profile> {
+  return invoke<Profile>("get_profile");
+}
+
+/** Needs the server. Returns the session, with the new name. */
+export function updateProfile(profile: ProfileInput): Promise<Session> {
+  return invoke<Session>("update_profile", { profile });
 }
 
 /** Same rules as the server (dental-server/internal/service/auth.go). */

@@ -78,6 +78,9 @@ pub struct SessionInfo {
     /// Set for a restricted login (`BillingSession`): why the clinic cannot be
     /// used now, e.g. no subscription in force. Only the subscription page works.
     pub billing: Option<Message>,
+    /// Locked by the user (the lock screen): clinic data stays closed to the
+    /// frontend until the password is given again (`with_session`). Sync goes on.
+    pub locked: bool,
 }
 
 /// An open login: the database stays open until logout.
@@ -450,6 +453,7 @@ fn billing_session(response: proto::LoginResponse, password: &str) -> Result<Bil
             online: true,
             offline_until: 0,
             billing: Some(billing_reason(&response.billing_reason)),
+            locked: false,
         },
         token: Zeroizing::new(response.session_token),
         password: Zeroizing::new(password.to_owned()),
@@ -558,6 +562,7 @@ impl OnlineLogin {
             online: true,
             offline_until: seconds(&self.grant.expires_at),
             billing: None,
+            locked: false,
         }
     }
 
@@ -764,6 +769,7 @@ fn login_offline(ctx: &Context, installation: &Installation, username: &str, pas
             online: false,
             offline_until: expires_at,
             billing: None,
+            locked: false,
         },
         db,
         key_version: database_key.version,
@@ -843,7 +849,9 @@ pub fn switch_online(ctx: &Context, session: &mut Session, login: &OnlineLogin) 
     }
 
     let role = login.record(&session.db)?;
-    session.info = login.session_info(role);
+    // Reconnecting never unlocks: the lock screen stays until the password is given.
+    let locked = session.info.locked;
+    session.info = SessionInfo { locked, ..login.session_info(role) };
     session.key_version = login.new_version();
     session.token = Some(login.token.clone());
     session.reconnect_password = None;
@@ -1106,6 +1114,7 @@ mod e2e {
                 online: true,
                 offline_until: 0,
                 billing: None,
+                locked: false,
             },
             db: Connection::open_in_memory().unwrap(),
             key_version: 1,

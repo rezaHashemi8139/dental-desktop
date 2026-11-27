@@ -175,6 +175,20 @@ impl Api {
             .await
     }
 
+    /// The logged-in user's own account details. A restricted session may call it too.
+    pub async fn get_profile(&self, token: &str) -> Result<proto::GetProfileResponse, ApiError> {
+        self.call("AuthService", "GetProfile", &proto::GetProfileRequest {}, Some(token)).await
+    }
+
+    /// Changes the logged-in user's full name and phone. A restricted session may call it too.
+    pub async fn update_profile(
+        &self,
+        token: &str,
+        request: &proto::UpdateProfileRequest,
+    ) -> Result<proto::UpdateProfileResponse, ApiError> {
+        self.call("AuthService", "UpdateProfile", request, Some(token)).await
+    }
+
     /// Downloadable interface languages. No session needed.
     pub async fn list_languages(&self) -> Result<proto::ListLanguagesResponse, ApiError> {
         self.call("LanguageService", "ListLanguages", &proto::ListLanguagesRequest {}, None).await
