@@ -16,6 +16,7 @@ import { HomePage } from "@/pages/home-page";
 import { PatientPage } from "@/pages/patient-page";
 import { PatientsPage } from "@/pages/patients-page";
 import { SubscriptionPage } from "@/pages/subscription-page";
+import { WorkHoursPage } from "@/pages/work-hours-page";
 
 /**
  * Pages. A desktop app has no address bar, so history lives in memory.
@@ -26,6 +27,7 @@ import { SubscriptionPage } from "@/pages/subscription-page";
  * /home        ┐ "app" layout (sidebar): only when logged in; pages read the session with useSession()
  * /patients    │ the clinic's patients, searched by name or code
  * /patients/$patientId │ one patient: details, treatments, history in every clinic
+ * /work-hours  │ hours worked per month (local only), and adding a user to the clinic
  * /database    │ backups and clearing the clinic database
  * /subscription┘ the owner's subscription; the only page of a restricted (billing-only) login
  *
@@ -118,6 +120,12 @@ const patientRoute = createRoute({
   component: PatientPage,
 });
 
+const workHoursRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "work-hours",
+  component: WorkHoursPage,
+});
+
 const databaseRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "database",
@@ -133,7 +141,7 @@ const subscriptionRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   indexRoute,
   authRoute.addChildren([loginRoute, registerRoute]),
-  appRoute.addChildren([homeRoute, patientsRoute, patientRoute, databaseRoute, subscriptionRoute]),
+  appRoute.addChildren([homeRoute, patientsRoute, patientRoute, workHoursRoute, databaseRoute, subscriptionRoute]),
 ]);
 
 export const router = createRouter({

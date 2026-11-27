@@ -1,5 +1,5 @@
-//! The encrypted local database (SQLCipher). Patient data and the users of this
-//! installation with their roles live here.
+//! The encrypted local database (SQLCipher). Patient data, the users of this
+//! installation with their roles, and their working hours live here.
 
 use std::io::Read as _;
 use std::path::Path;
@@ -248,6 +248,24 @@ const MIGRATIONS: &[Migration] = &[
     );"),
     // 3: people are identified by one code (person.rs); identity_type and nationality go.
     Migration::Code(identity_code),
+    // 4: when the clinic's users came and left, and their notes per day (work_hours.rs).
+    // Local only: never sent to the server.
+    Migration::Sql("CREATE TABLE work_hours (
+        id         BLOB PRIMARY KEY,      -- random, 16 bytes
+        user_id    BLOB NOT NULL,         -- server user id (users.id) of who worked
+        started_at INTEGER NOT NULL,      -- unix milliseconds: came in
+        ended_at   INTEGER,               -- unix milliseconds: left; NULL while still at work
+        created_at INTEGER NOT NULL,      -- unix milliseconds
+        updated_at INTEGER NOT NULL       -- unix milliseconds
+    );
+    CREATE INDEX work_hours_user ON work_hours (user_id, started_at);
+    CREATE TABLE work_day_notes (
+        user_id    BLOB NOT NULL,         -- server user id (users.id)
+        day        TEXT NOT NULL,         -- local day, Gregorian YYYY-MM-DD
+        notes      TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,      -- unix milliseconds
+        PRIMARY KEY (user_id, day)        -- the same anywhere: safe to merge (merge_contents)
+    );"),
 ];
 
 /// Migration 3. Patient ids are now derived from the code alone (patients::patient_id),
@@ -297,14 +315,14 @@ pub const SYNC_REJECTED: &str = "rejected";
 pub const SYNCED_TABLES: &[&str] = &["patients", "treatments"];
 
 /// Tables that never leave this computer: who may log in here and their roles,
-/// sync bookkeeping, and **every financial table** (fees, payments, balances,
-/// debts...). Financial data must never reach the server, so a financial table
-/// always goes here, never in SYNCED_TABLES.
+/// sync bookkeeping, working hours, and **every financial table** (fees,
+/// payments, balances, debts...). Financial data must never reach the server, so
+/// a financial table always goes here, never in SYNCED_TABLES.
 ///
 /// Every table must be in exactly one of the two lists; a test checks it, so a
 /// new table cannot be added without deciding whether it is synced.
 #[allow(dead_code)] // Read by the test that checks every table is classified.
-pub const LOCAL_ONLY_TABLES: &[&str] = &["users", "sync_cursors"];
+pub const LOCAL_ONLY_TABLES: &[&str] = &["users", "sync_cursors", "work_hours", "work_day_notes"];
 
 /// The schema version this app writes: how many migrations it has.
 pub fn latest_schema_version() -> i64 {
@@ -360,8 +378,20 @@ pub struct LocalUser {
     pub full_name: String,
 }
 
-/// Everyone who has logged in here, by name: who can be picked as having
-/// performed a treatment, and whose names treatments show.
+/// Adds a user created from this computer (members.rs) before they ever log in
+/// here, so they can be picked at once (e.g. for working hours). A user already
+/// here keeps their role; only their names are refreshed.
+pub fn add_user(conn: &Connection, user_id: &[u8], username: &str, full_name: &str, now: i64) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO users (id, username, full_name, role, created_at) VALUES (?1, ?2, ?3, ?4, ?5)
+         ON CONFLICT (id) DO UPDATE SET username = ?2, full_name = ?3",
+        params![user_id, username, full_name, ROLE_STAFF, now],
+    )?;
+    Ok(())
+}
+
+/// Everyone who has logged in here (or was added from here), by name: who can
+/// be picked as having performed a treatment, and whose names treatments show.
 pub fn list_users(conn: &Connection) -> rusqlite::Result<Vec<LocalUser>> {
     let mut statement = conn.prepare("SELECT id, username, full_name FROM users ORDER BY full_name, username")?;
     let rows = statement.query_map([], |row| {

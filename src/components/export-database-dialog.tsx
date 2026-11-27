@@ -180,7 +180,7 @@ function ExportDone({ result, onDone }: { result: ExportResult; onDone: () => vo
             value={result.recoveryKey}
             dir="ltr"
             spellCheck={false}
-            className="font-mono rtl:text-end"
+            className="font-mono"
             onFocus={(e) => e.currentTarget.select()}
           />
           <Button

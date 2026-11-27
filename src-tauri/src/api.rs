@@ -169,6 +169,25 @@ impl Api {
         self.call("MemberService", "ListMembers", &proto::ListMembersRequest {}, Some(token)).await
     }
 
+    /// An account for someone who has none, with a temporary password; returns the
+    /// existing one if the identity already has an account. Clinic admins only.
+    pub async fn create_user(
+        &self,
+        token: &str,
+        request: &proto::CreateUserRequest,
+    ) -> Result<proto::CreateUserResponse, ApiError> {
+        self.call("MemberService", "CreateUser", request, Some(token)).await
+    }
+
+    /// Lets an account log in to the session's clinic. Clinic admins only.
+    pub async fn add_member(
+        &self,
+        token: &str,
+        request: &proto::AddMemberRequest,
+    ) -> Result<proto::AddMemberResponse, ApiError> {
+        self.call("MemberService", "AddMember", request, Some(token)).await
+    }
+
     /// Short timeout: it also runs while the app closes, which must not hang when the server is down.
     pub async fn logout(&self, token: &str) -> Result<proto::LogoutResponse, ApiError> {
         self.call_with_timeout("AuthService", "Logout", &proto::LogoutRequest {}, Some(token), LOGOUT_TIMEOUT)

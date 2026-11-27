@@ -8,6 +8,7 @@ mod device;
 mod languages;
 mod localdb;
 mod lockdown;
+mod members;
 mod message;
 mod patients;
 mod person;
@@ -19,6 +20,7 @@ mod setup;
 mod sync;
 mod update;
 mod vault;
+mod work_hours;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -192,6 +194,82 @@ fn list_local_users(state: State<'_, AuthState>) -> Result<Vec<localdb::LocalUse
     with_session(&state, |session| {
         localdb::list_users(&session.db).map_err(|e| Message::error("errors.unknown", e))
     })
+}
+
+// --- Working hours (work_hours.rs): local only, never synced ---------------
+
+/// `user_id`'s working hours that started in [from, to) (unix milliseconds), and
+/// their notes of the days in [from_day, to_day) ("YYYY-MM-DD").
+#[tauri::command]
+fn list_work_hours(
+    state: State<'_, AuthState>,
+    user_id: String,
+    from: i64,
+    to: i64,
+    from_day: String,
+    to_day: String,
+) -> Result<work_hours::WorkHoursList, Message> {
+    with_session(&state, |session| {
+        work_hours::list(&session.db, &session.info, &user_id, (from, to), (&from_day, &to_day))
+    })
+}
+
+/// Sets `user_id`'s notes for `day` ("YYYY-MM-DD"); empty notes remove them.
+#[tauri::command]
+fn save_work_day_note(
+    state: State<'_, AuthState>,
+    user_id: String,
+    day: String,
+    notes: String,
+) -> Result<work_hours::DayNote, Message> {
+    with_session(&state, |session| {
+        work_hours::save_day_note(&session.db, &session.info, &user_id, &day, &notes, clock::now_millis())
+    })
+}
+
+/// Adds (no `id`) or changes an entry of working hours.
+#[tauri::command]
+fn save_work_hours(
+    state: State<'_, AuthState>,
+    id: Option<String>,
+    entry: work_hours::WorkHoursInput,
+) -> Result<work_hours::WorkHoursRecord, Message> {
+    with_session(&state, |session| {
+        work_hours::save(&session.db, &session.info, id.as_deref(), &entry, clock::now_millis())
+    })
+}
+
+#[tauri::command]
+fn delete_work_hours(state: State<'_, AuthState>, id: String) -> Result<(), Message> {
+    with_session(&state, |session| work_hours::delete(&session.db, &session.info, &id))
+}
+
+/// Adds a user to the clinic on the server (members.rs), then to this computer's
+/// users at once, so their hours can be recorded before they ever log in here.
+#[tauri::command]
+async fn create_member(
+    app: AppHandle,
+    state: State<'_, AuthState>,
+    member: members::MemberInput,
+) -> Result<members::CreatedMember, Message> {
+    let token = Zeroizing::new(with_session(&state, |session| {
+        if !session.info.is_admin {
+            return Err(Message::new("members.errors.notAdmin"));
+        }
+        session.token().map(str::to_owned).ok_or_else(|| Message::new("members.errors.needsServer"))
+    })?);
+    let created =
+        members::create(&state.ctx, &token, &member).await.inspect_err(|e| check_update_required(&app, &state, e))?;
+    // Already on the server: if the session closed meanwhile, the next login lists them anyway.
+    let stored = with_session(&state, |session| {
+        let id = hex::decode(&created.id).map_err(|e| Message::error("errors.unknown", e))?;
+        localdb::add_user(&session.db, &id, &created.username, &created.full_name, clock::now_unix())
+            .map_err(|e| Message::error("errors.unknown", e))
+    });
+    if let Err(e) = stored {
+        eprintln!("User created, but not added to this computer's users: {} {:?}", e.key, e.params);
+    }
+    Ok(created)
 }
 
 #[tauri::command]
@@ -608,6 +686,126 @@ async fn update_profile(
     Ok(session.info.clone())
 }
 
+/// The error of `change_own_password` when the current password given is wrong.
+const WRONG_CURRENT_PASSWORD: &str = "account.password.errors.wrongCurrent";
+
+/// Changes the logged-in user's own password on the server, proven with the current
+/// one (the profile dialog). Online logins only. The server then ends every session
+/// of the account, this one included, so the app logs in again at once with the new
+/// password: the open session goes on (returned), and offline login and the lock
+/// screen take the new password from now on (the vault entry is rewritten). If that
+/// login fails, the session ends and the login screen asks for the new password.
+#[tauri::command]
+async fn change_own_password(
+    app: AppHandle,
+    state: State<'_, AuthState>,
+    current_password: String,
+    new_password: String,
+) -> Result<SessionInfo, Message> {
+    let (current_password, new_password) = (Zeroizing::new(current_password), Zeroizing::new(new_password));
+    // Never during a login, a reconnect or a database action: logging in again rekeys
+    // the database and writes the vault.
+    let Ok(_busy) = state.busy.try_lock() else {
+        return Err(Message::new("auth.errors.busy"));
+    };
+    if state.updates.is_required() {
+        return Err(Message::new(update::REQUIRED_ERROR));
+    }
+    // A restricted login, or a full one that is online and not locked.
+    server_token(&state, "account.errors.needsServer")?;
+    let restricted = state.billing.lock().unwrap().as_ref().map(|billing| billing.info.clone());
+    let user = match restricted.clone() {
+        Some(user) => user,
+        None => open_session(state.session.lock().unwrap().as_ref())?.info.clone(),
+    };
+
+    auth::change_password(&state.ctx, &user.username, &current_password, &new_password)
+        .await
+        .map_err(|e| if e.key == "auth.errors.invalidCredentials" { Message::new(WRONG_CURRENT_PASSWORD) } else { e })
+        .inspect_err(|e| check_update_required(&app, &state, e))?;
+
+    let logged_in = if restricted.is_some() {
+        login_restricted_again(&app, &state, &user, &new_password).await
+    } else {
+        login_full_again(&app, &state, &user, &new_password).await
+    };
+    logged_in.map_err(|reason| {
+        eprintln!("Password changed, but not logged in again: {reason}");
+        Message::new("account.password.changedLogInAgain")
+    })
+}
+
+/// After a password change: the open full session logs in online again with the new
+/// password, as an offline session reconnects (`reconnect`). Err is the reason, for the log;
+/// the session is then ended.
+async fn login_full_again(app: &AppHandle, state: &AuthState, user: &SessionInfo, password: &str) -> Result<SessionInfo, String> {
+    let request = auth::ReconnectRequest::after_password_change(user, password);
+    let (installation, login) = match auth::reconnect_login(&state.ctx, &request).await {
+        Ok(result) => result,
+        Err(e) => {
+            end_session_after_password_change(app, state).await;
+            return Err(match e {
+                ReconnectError::Later(reason) => reason,
+                ReconnectError::GiveUp(message) | ReconnectError::Revoked(message) => message.key,
+            });
+        }
+    };
+    let switched = {
+        let mut guard = state.session.lock().unwrap();
+        match guard.as_mut() {
+            // Not after a logout in the meantime.
+            Some(session) if session.info.user_id == user.user_id => {
+                auth::switch_online(&state.ctx, session, &login).map(|()| session.info.clone()).map_err(|m| m.key)
+            }
+            _ => Err("logged out meanwhile".to_owned()),
+        }
+    };
+    match switched {
+        Ok(info) => {
+            if let Err(message) = auth::finish_reconnect(&state.ctx, &installation, &login, &request).await {
+                eprintln!("Logged in again, but offline access not updated: {} {:?}", message.key, message.params);
+            }
+            request_sync(app);
+            Ok(info)
+        }
+        Err(reason) => {
+            auth::discard_login(&state.ctx, login).await;
+            end_session_after_password_change(app, state).await;
+            Err(reason)
+        }
+    }
+}
+
+/// After a password change: the restricted login logs in again with the new password,
+/// as `resume_login` does (it may open the clinic, if the subscription now covers it).
+async fn login_restricted_again(app: &AppHandle, state: &AuthState, user: &SessionInfo, password: &str) -> Result<SessionInfo, String> {
+    let login = match auth::login(&state.ctx, &user.username, password, true).await {
+        Ok(login) => login,
+        Err(message) => {
+            end_session_after_password_change(app, state).await;
+            return Err(message.key);
+        }
+    };
+    // Not after a logout in the meantime.
+    let previous = state.billing.lock().unwrap().take_if(|billing| billing.info.user_id == user.user_id);
+    let Some(previous) = previous else {
+        match login {
+            auth::Login::Full(session) => auth::logout(&state.ctx, session).await,
+            auth::Login::Billing(billing) => auth::logout_billing(&state.ctx, billing).await,
+        }
+        return Err("logged out meanwhile".to_owned());
+    };
+    auth::logout_billing(&state.ctx, previous).await;
+    Ok(keep_login(app, state, login))
+}
+
+/// The server ended the login's token when the password changed, and logging in again
+/// did not work: the login ends here too, and the login screen asks for the new password.
+async fn end_session_after_password_change(app: &AppHandle, state: &AuthState) {
+    end_sessions(state).await;
+    let _ = app.emit(SESSION_ENDED_EVENT, Message::new("account.password.changedLogInAgain"));
+}
+
 /// Tells the frontend when a server call failed because this version must be updated first.
 fn check_update_required(app: &AppHandle, state: &AuthState, error: &Message) {
     if error.key == update::REQUIRED_ERROR {
@@ -852,6 +1050,7 @@ pub fn run() {
             unlock_session,
             get_profile,
             update_profile,
+            change_own_password,
             billing_status,
             list_plans,
             quote_payment,
@@ -875,6 +1074,11 @@ pub fn run() {
             delete_treatment,
             patient_history,
             list_local_users,
+            list_work_hours,
+            save_work_hours,
+            delete_work_hours,
+            save_work_day_note,
+            create_member,
             languages::get_language_catalog,
             languages::list_installed_languages,
             languages::install_language,

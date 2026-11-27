@@ -75,6 +75,20 @@ export const profileSchema = z.object({
 });
 export type ProfileValues = z.infer<typeof profileSchema>;
 
+/** The user's own password (src/components/profile-dialog.tsx): the current one, then the new one twice. */
+export const changeOwnPasswordSchema = z
+  .object({
+    currentPassword: required,
+    password: newPassword,
+    confirmPassword: z.string(),
+  })
+  .refine(passwordsMatch, passwordMismatch)
+  .refine((v) => v.password !== v.currentPassword, {
+    path: ["password"],
+    message: message("auth.errors.passwordUnchanged"),
+  });
+export type ChangeOwnPasswordValues = z.infer<typeof changeOwnPasswordSchema>;
+
 /** The lock screen: only the password; Rust checks it. */
 export const unlockSchema = z.object({
   password: required,
@@ -199,3 +213,38 @@ export function clearDatabaseSchema(username: string) {
   });
 }
 export type ClearDatabaseValues = z.infer<ReturnType<typeof clearDatabaseSchema>>;
+
+// --- Working hours (src/components/work-hours-dialog.tsx, member-dialog.tsx) ---
+
+/** "HH:MM" from a time input (24 hours). */
+const TIME_PATTERN = /^([01][0-9]|2[0-3]):[0-5][0-9]$/;
+
+/** Rust checks the times again (no future, no overlap: src-tauri/src/work_hours.rs). */
+export const workHoursSchema = z.object({
+  day: z
+    .string()
+    .nullable()
+    .refine((v) => !!v, message("workHours.validation.dayRequired")),
+  start: z.string().regex(TIME_PATTERN, message("workHours.validation.timeFormat")),
+  /** "" while still at work. */
+  end: z.string().refine((v) => v === "" || TIME_PATTERN.test(v), message("workHours.validation.timeFormat")),
+});
+export type WorkHoursFormValues = z.input<typeof workHoursSchema>;
+export type WorkHoursValues = z.infer<typeof workHoursSchema>;
+
+/** A day's notes; empty removes them. */
+export const dayNoteSchema = z.object({
+  notes: z.string().trim(),
+});
+export type DayNoteValues = z.infer<typeof dayNoteSchema>;
+
+/** A new user of the clinic: the sign-up fields, with a temporary password instead of their own. */
+export const memberSchema = z.object({
+  fullName: requiredText,
+  identityCode,
+  phone,
+  email,
+  username,
+  temporaryPassword: newPassword,
+});
+export type MemberValues = z.infer<typeof memberSchema>;

@@ -96,7 +96,7 @@ export function DateField({
           </SelectContent>
         </Select>
         <Input
-          className="w-20 rtl:text-end"
+          className="w-20"
           aria-label={t("dateField.year")}
           placeholder={t("dateField.year")}
           aria-invalid={!!error}

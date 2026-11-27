@@ -213,6 +213,20 @@ pub struct ReconnectRequest {
     password: Zeroizing<String>,
 }
 
+impl ReconnectRequest {
+    /// For an online session whose token the server has just ended because the user
+    /// changed their own password: `reconnect_login` with the new password, then
+    /// `switch_online` and `finish_reconnect`, move the open session and the vault
+    /// entry to it, so the user goes on without logging in again.
+    pub fn after_password_change(user: &SessionInfo, new_password: &str) -> Self {
+        Self {
+            user_id: user.user_id.clone(),
+            username: user.username.clone(),
+            password: Zeroizing::new(new_password.to_owned()),
+        }
+    }
+}
+
 fn err(key: &str) -> Message {
     Message::new(key)
 }
@@ -263,6 +277,9 @@ pub(crate) fn server_error(code: &str, reason: &str) -> Message {
         "purchase_limit_reached" => err("billing.errors.purchaseLimitReached"),
         "payment_required" => err("billing.errors.paymentRequired"),
         "payment_not_required" => err("billing.errors.paymentNotRequired"),
+        "not_admin" => err("members.errors.notAdmin"),
+        "user_not_found" => err("members.errors.userNotFound"),
+        "already_member" => err("members.errors.alreadyMember"),
         crate::api::UPDATE_REQUIRED => err(crate::update::REQUIRED_ERROR),
         _ => Message::error("auth.errors.server", format!("{code}: {reason}")),
     }

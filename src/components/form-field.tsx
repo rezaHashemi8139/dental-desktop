@@ -2,7 +2,6 @@ import type { ComponentProps } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { latinKeyDown, latinPaste } from "@/lib/latin-input";
-import { cn } from "@/lib/utils";
 
 interface FormFieldProps extends ComponentProps<typeof Input> {
   id: string;
@@ -11,7 +10,7 @@ interface FormFieldProps extends ComponentProps<typeof Input> {
   error?: string | null;
   /**
    * Types Latin whatever the keyboard layout (see src/lib/latin-input.ts). Also
-   * left-to-right, but still aligned to the page's start side (right in RTL).
+   * left-to-right and left-aligned, in right-to-left languages too.
    */
   latin?: boolean;
 }
@@ -32,7 +31,7 @@ export function FormField({
   const latinProps: ComponentProps<typeof Input> = latin
     ? {
         dir: "ltr",
-        className: cn("rtl:text-end", className),
+        className,
         spellCheck: false,
         autoCapitalize: "off",
         autoCorrect: "off",

@@ -142,6 +142,16 @@ export function updateProfile(profile: ProfileInput): Promise<Session> {
   return invoke<Session>("update_profile", { profile });
 }
 
+/**
+ * The logged-in user's own password, proven with the current one. Needs the server,
+ * which then ends every session of the account; Rust logs in again with the new
+ * password, so the session goes on: returns it. If that fails, the session ends
+ * (event "session-ended") and the login screen asks for the new password.
+ */
+export function changeOwnPassword(currentPassword: string, newPassword: string): Promise<Session> {
+  return invoke<Session>("change_own_password", { currentPassword, newPassword });
+}
+
 /** Same rules as the server (dental-server/internal/service/auth.go). */
 export const USERNAME_PATTERN = /^[A-Za-z0-9._-]{3,32}$/;
 /** Also needs a digit, a lowercase and an uppercase letter (src/auth/schemas.ts). */
