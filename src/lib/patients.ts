@@ -27,11 +27,10 @@ export interface PatientInput extends PersonIdentityInput {
 }
 
 export interface Patient {
-  /** 32 hex digits, derived from the identity: the same on every computer. */
+  /** 32 hex digits, derived from the identification code: the same on every computer. */
   id: string;
-  identityType: "national" | "foreign";
+  /** The identification code. */
   identity: string;
-  nationality: string;
   firstName: string;
   lastName: string;
   birthDate: string;
@@ -71,9 +70,7 @@ export interface Treatment {
 
 /** A patient's history in every clinic, from the server. */
 export interface PatientHistory {
-  identityType: "national" | "foreign" | "";
   identity: string;
-  nationality: string;
   firstName: string;
   lastName: string;
   birthDate: string;
@@ -126,9 +123,5 @@ export function deleteTreatment(id: string): Promise<void> {
  * records who looked, from which clinic, and when.
  */
 export function patientHistory(identity: PersonIdentityInput): Promise<PatientHistory> {
-  return invoke<PatientHistory>("patient_history", {
-    identityType: identity.identityType,
-    identity: identity.identity,
-    nationality: identity.nationality ?? "",
-  });
+  return invoke<PatientHistory>("patient_history", { identity: identity.identity });
 }

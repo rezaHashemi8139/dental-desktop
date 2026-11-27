@@ -3,11 +3,13 @@ import { CreditCardIcon, DatabaseIcon, HouseIcon, type LucideIcon } from "lucide
 import { useTranslation } from "react-i18next";
 import { useSession } from "@/auth/store";
 import { Button } from "@/components/ui/button";
+import { version } from "../../package.json";
 
 /**
  * Side navigation of the logged-in pages (src/router.tsx). Link marks the
  * current page with data-status="active". The clinic owner also has the
- * subscription page; a restricted login has nothing else.
+ * subscription page; a restricted login has nothing else. The app version is
+ * shown at the bottom.
  */
 export function AppSidebar() {
   const { t } = useTranslation();
@@ -20,6 +22,7 @@ export function AppSidebar() {
         {!restricted && <SidebarLink to="/database" icon={DatabaseIcon} label={t("nav.database")} />}
         {session?.isOwner && <SidebarLink to="/subscription" icon={CreditCardIcon} label={t("nav.subscription")} />}
       </nav>
+      <p className="mt-auto pt-3 text-center text-xs text-muted-foreground">{t("settings.about.version", { version })}</p>
     </aside>
   );
 }

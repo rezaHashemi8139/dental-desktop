@@ -190,11 +190,9 @@ fn delete_treatment(app: AppHandle, state: State<'_, AuthState>, id: String) -> 
 async fn patient_history(
     app: AppHandle,
     state: State<'_, AuthState>,
-    identity_type: patients::Identity,
     identity: String,
-    nationality: String,
 ) -> Result<patients::PatientHistory, Message> {
-    let request = person::to_proto(identity_type, &identity, &nationality)?;
+    let request = person::to_proto(&identity)?;
     let token = with_session(&state, |session| {
         session.token().map(str::to_owned).ok_or_else(|| Message::new("patients.errors.historyNeedsServer"))
     })?;

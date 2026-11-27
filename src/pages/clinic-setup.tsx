@@ -246,7 +246,7 @@ function NewClinicForm({ setup, connect, onBack }: NewClinicFormProps) {
     setValue,
     formState: { errors, isSubmitting },
   } = useForm<ClinicValues>({
-    // Old accounts without an identity on file give their national ID here.
+    // Old accounts without an identity on file give their identification code here.
     resolver: zodResolver(mine.identityOnFile ? clinicSchema : clinicWithIdentitySchema),
     defaultValues: {
       name: "",
@@ -257,18 +257,18 @@ function NewClinicForm({ setup, connect, onBack }: NewClinicFormProps) {
       address: "",
       postalCode: "",
       location: null,
-      nationalId: "",
+      identityCode: "",
     },
   });
 
   // `values` are already checked and trimmed by the schema; the location is set.
   async function submit(values: ClinicValues) {
     setError(null);
-    const { location, nationalId, provinceId: _province, cityId, ...clinic } = values;
+    const { location, identityCode, provinceId: _province, cityId, ...clinic } = values;
     const target: SetupTarget = {
       kind: "new",
       clinic: { ...clinic, cityId: Number(cityId), latitude: location!.latitude, longitude: location!.longitude },
-      ...(mine.identityOnFile ? {} : { identityType: "national", identity: nationalId }),
+      ...(mine.identityOnFile ? {} : { identity: identityCode }),
     };
     const failed = await connect(target);
     if (failed) setError(failed);
@@ -344,14 +344,13 @@ function NewClinicForm({ setup, connect, onBack }: NewClinicFormProps) {
           </div>
           {!mine.identityOnFile && (
             <FormField
-              id="clinic-owner-national-id"
-              label={t("setup.fields.nationalId")}
-              hint={t("setup.hints.existingNationalId")}
-              error={fieldError(errors.nationalId)}
-              inputMode="numeric"
-              maxLength={10}
+              id="clinic-owner-identity-code"
+              label={t("setup.fields.identityCode")}
+              hint={t("setup.hints.existingIdentityCode")}
+              error={fieldError(errors.identityCode)}
+              maxLength={24}
               latin
-              {...register("nationalId")}
+              {...register("identityCode")}
             />
           )}
           <div className="sm:col-span-2">

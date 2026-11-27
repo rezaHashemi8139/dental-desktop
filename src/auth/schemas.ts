@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { ParseKeys } from "i18next";
 import { MIN_PASSWORD_LENGTH, USERNAME_PATTERN } from "./session";
-import { isValidNationalId, LICENSE_NUMBER_PATTERN, PHONE_PATTERN, POSTAL_CODE_PATTERN } from "./setup";
+import { IDENTITY_CODE_PATTERN, LICENSE_NUMBER_PATTERN, PHONE_PATTERN, POSTAL_CODE_PATTERN } from "./setup";
 import { isRecoveryKeyFormat } from "@/lib/backup";
 import { CARD_LAST4_PATTERN, PAYMENT_REFERENCE_PATTERN } from "@/lib/billing";
 
@@ -33,13 +33,17 @@ export const loginSchema = z.object({
 export type LoginValues = z.infer<typeof loginSchema>;
 
 const phone = z.string().trim().regex(PHONE_PATTERN, message("setup.validation.phoneFormat"));
-const nationalId = z.string().trim().refine(isValidNationalId, message("setup.validation.nationalIdFormat"));
+// Typed in any case, with spaces or dashes; sent the way the server takes it.
+const identityCode = z
+  .string()
+  .transform((v) => v.replace(/[\s-]/g, "").toUpperCase())
+  .pipe(z.string().regex(IDENTITY_CODE_PATTERN, message("setup.validation.identityCodeFormat")));
 
 /** Every account has an identity (unique across the system) and a mobile number. */
 export const registerSchema = z
   .object({
     fullName: requiredText,
-    nationalId,
+    identityCode,
     phone,
     username,
     password: newPassword,
@@ -79,10 +83,10 @@ const clinicFields = {
 };
 
 /** A new clinic, for an account with an identity on file. */
-export const clinicSchema = z.object({ ...clinicFields, nationalId: z.string() });
+export const clinicSchema = z.object({ ...clinicFields, identityCode: z.string() });
 
 /** A new clinic, for an old account without an identity on file: it is saved with the clinic. */
-export const clinicWithIdentitySchema = z.object({ ...clinicFields, nationalId });
+export const clinicWithIdentitySchema = z.object({ ...clinicFields, identityCode });
 
 export type ClinicValues = z.infer<typeof clinicWithIdentitySchema>;
 

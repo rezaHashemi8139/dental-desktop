@@ -5,8 +5,8 @@
 //! the server once it can. Financial data never goes in these tables; it belongs
 //! in local-only tables (localdb::LOCAL_ONLY_TABLES).
 //!
-//! A patient is a person, unique across the whole system by identity (an Iranian
-//! national ID, or a foreign national's FIDA code), and their id is derived from it
+//! A patient is a person, unique across the whole system by identification code
+//! (see person.rs), and their id is derived from it
 //! (`patient_id`): every installation gives the same person the same id, even
 //! offline, so their records meet on the server.
 
@@ -17,8 +17,6 @@ use crate::localdb::{SYNC_NEW, SYNC_REJECTED};
 use crate::message::Message;
 use crate::person::{self, latin_digits};
 use crate::secure;
-
-pub use crate::person::Identity;
 
 /// Records per list, so a broad search stays quick.
 const LIST_LIMIT: i64 = 200;
@@ -37,10 +35,11 @@ fn internal(details: impl std::fmt::Display) -> Message {
     Message::error("errors.unknown", details)
 }
 
-/// A patient's id, from their identity: the same on every installation and on the
-/// server (Patient.id in dental-server/proto/dental/v1/patient.proto).
-pub fn patient_id(identity: Identity, number: &str) -> [u8; 16] {
-    let input = format!("dental/patient/v1\0{}\0{number}", identity.to_proto() as i32);
+/// A patient's id, from their identification code (already normalized): the same
+/// on every installation and on the server (Patient.id in
+/// dental-server/proto/dental/v1/patient.proto).
+pub fn patient_id(code: &str) -> [u8; 16] {
+    let input = format!("dental/patient/v2\0{code}");
     let mut id = [0u8; 16];
     id.copy_from_slice(&secure::sha256(input.as_bytes())[..16]);
     id[6] = (id[6] & 0x0f) | 0x80; // version 8
@@ -125,11 +124,8 @@ const CHANGED_STATE: &str = "CASE sync_state WHEN 'new' THEN 'new' ELSE 'changed
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PatientInput {
-    pub identity_type: Identity,
+    /// The identification code.
     pub identity: String,
-    /// Only for foreign nationals; national IDs are always "IR".
-    #[serde(default)]
-    pub nationality: String,
     pub first_name: String,
     pub last_name: String,
     #[serde(default)]
@@ -151,9 +147,7 @@ pub struct PatientInput {
 pub struct PatientRecord {
     /// 32 hex digits.
     pub id: String,
-    pub identity_type: String,
     pub identity: String,
-    pub nationality: String,
     pub first_name: String,
     pub last_name: String,
     pub birth_date: String,
@@ -168,34 +162,30 @@ pub struct PatientRecord {
     pub sync_state: String,
 }
 
-const PATIENT_COLUMNS: &str = "id, identity_type, identity, nationality, first_name, last_name, birth_date, gender, \
-     phone, address, medical_notes, created_at, updated_at, sync_state";
+const PATIENT_COLUMNS: &str =
+    "id, identity, first_name, last_name, birth_date, gender, phone, address, medical_notes, created_at, updated_at, sync_state";
 
 fn patient_from_row(row: &Row) -> rusqlite::Result<PatientRecord> {
     Ok(PatientRecord {
         id: hex::encode(row.get::<_, Vec<u8>>(0)?),
-        identity_type: row.get(1)?,
-        identity: row.get(2)?,
-        nationality: row.get(3)?,
-        first_name: row.get(4)?,
-        last_name: row.get(5)?,
-        birth_date: row.get(6)?,
-        gender: row.get(7)?,
-        phone: row.get(8)?,
-        address: row.get(9)?,
-        medical_notes: row.get(10)?,
-        created_at: row.get(11)?,
-        updated_at: row.get(12)?,
-        sync_state: row.get(13)?,
+        identity: row.get(1)?,
+        first_name: row.get(2)?,
+        last_name: row.get(3)?,
+        birth_date: row.get(4)?,
+        gender: row.get(5)?,
+        phone: row.get(6)?,
+        address: row.get(7)?,
+        medical_notes: row.get(8)?,
+        created_at: row.get(9)?,
+        updated_at: row.get(10)?,
+        sync_state: row.get(11)?,
     })
 }
 
 /// A checked PatientInput, ready to store.
 struct CheckedPatient {
     id: [u8; 16],
-    identity: Identity,
-    number: String,
-    nationality: String,
+    code: String,
     first_name: String,
     last_name: String,
     birth_date: String,
@@ -206,16 +196,14 @@ struct CheckedPatient {
 }
 
 fn check_patient(input: &PatientInput) -> Result<CheckedPatient, Message> {
-    let (number, nationality) = person::normalize(input.identity_type, &input.identity, &input.nationality)?;
+    let code = person::normalize(&input.identity)?;
     let gender = match input.gender.trim() {
         g @ ("" | "male" | "female") => g.to_owned(),
         _ => return Err(err("patients.errors.invalidGender")),
     };
     Ok(CheckedPatient {
-        id: patient_id(input.identity_type, &number),
-        identity: input.identity_type,
-        number,
-        nationality,
+        id: patient_id(&code),
+        code,
         first_name: required(&input.first_name, MAX_NAME_CHARS, "patients.errors.nameRequired")?,
         last_name: required(&input.last_name, MAX_NAME_CHARS, "patients.errors.nameRequired")?,
         birth_date: check_date(&input.birth_date)?,
@@ -278,9 +266,7 @@ pub fn save_patient(db: &Connection, id: Option<&str>, input: &PatientInput, now
     let updated_at = next_update(previous, now);
     let values = params![
         target,
-        patient.identity.as_str(),
-        patient.number,
-        patient.nationality,
+        patient.code,
         patient.first_name,
         patient.last_name,
         patient.birth_date,
@@ -293,18 +279,17 @@ pub fn save_patient(db: &Connection, id: Option<&str>, input: &PatientInput, now
     if previous.is_some() {
         // A patient the server refused was never stored there: still new.
         tx.execute(
-            "UPDATE patients SET identity_type = ?2, identity = ?3, nationality = ?4, first_name = ?5,
-                last_name = ?6, birth_date = ?7, gender = ?8, phone = ?9, address = ?10, medical_notes = ?11,
-                updated_at = ?12,
+            "UPDATE patients SET identity = ?2, first_name = ?3, last_name = ?4, birth_date = ?5, gender = ?6,
+                phone = ?7, address = ?8, medical_notes = ?9, updated_at = ?10,
                 sync_state = CASE sync_state WHEN 'new' THEN 'new' WHEN 'rejected' THEN 'new' ELSE 'changed' END
              WHERE id = ?1",
             values,
         )
     } else {
         tx.execute(
-            "INSERT INTO patients (id, identity_type, identity, nationality, first_name, last_name, birth_date, gender,
-                phone, address, medical_notes, updated_at, created_at, sync_state)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12, 'new')",
+            "INSERT INTO patients (id, identity, first_name, last_name, birth_date, gender, phone, address,
+                medical_notes, updated_at, created_at, sync_state)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10, 'new')",
             values,
         )
     }
@@ -491,9 +476,7 @@ pub fn list_treatments(db: &Connection, patient_id: &str) -> Result<Vec<Treatmen
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PatientHistory {
-    pub identity_type: String,
     pub identity: String,
-    pub nationality: String,
     pub first_name: String,
     pub last_name: String,
     pub birth_date: String,
@@ -525,9 +508,7 @@ pub fn history_from_proto(response: crate::proto::GetPatientHistoryResponse) -> 
     let patient = response.patient.unwrap_or_default();
     let identity = patient.identity.unwrap_or_default();
     PatientHistory {
-        identity_type: Identity::from_proto(identity.r#type).map_or("", Identity::as_str).to_owned(),
         identity: identity.number,
-        nationality: identity.nationality,
         first_name: patient.first_name,
         last_name: patient.last_name,
         birth_date: patient.birth_date,
@@ -567,11 +548,9 @@ mod tests {
         localdb::create(&dir.join(localdb::DATABASE_FILE), &[3u8; 32]).unwrap()
     }
 
-    fn input(national_id: &str) -> PatientInput {
+    fn input(code: &str) -> PatientInput {
         PatientInput {
-            identity_type: Identity::National,
-            identity: national_id.into(),
-            nationality: String::new(),
+            identity: code.into(),
             first_name: " Sara ".into(),
             last_name: "Ahmadi".into(),
             birth_date: "1990-02-28".into(),
@@ -582,26 +561,25 @@ mod tests {
         }
     }
 
-    // Valid national IDs (check digit).
     const SARA: &str = "0012345679";
     const OTHER: &str = "1234567891";
 
     /// The server derives the same id (dental-server/internal/service/sync.go, patientID).
     #[test]
     fn patient_id_is_stable_and_versioned() {
-        let id = patient_id(Identity::National, SARA);
-        assert_eq!(id, patient_id(Identity::National, SARA));
-        assert_ne!(id, patient_id(Identity::Foreign, SARA), "the type is part of it");
+        let id = patient_id(SARA);
+        assert_eq!(id, patient_id(SARA));
+        assert_ne!(id, patient_id(OTHER));
         assert_eq!(id[6] >> 4, 8, "UUID version 8");
         assert_eq!(id[8] >> 6, 0b10, "RFC 4122 variant");
-        let expected = secure::sha256(b"dental/patient/v1\x001\x000012345679");
+        let expected = secure::sha256(b"dental/patient/v2\x000012345679");
         assert_eq!(id[..6], expected[..6]);
     }
 
     /// The same value as dental-server's TestPatientID: both sides must agree.
     #[test]
     fn patient_id_matches_the_server() {
-        assert_eq!(hex::encode(patient_id(Identity::National, SARA)), "8089ab83b0a88a00964dc22230a0062f");
+        assert_eq!(hex::encode(patient_id(SARA)), "3cc05a27428a8621a9efab0ad5d2b80a");
     }
 
     #[test]
@@ -611,11 +589,10 @@ mod tests {
         persian.phone = "۰۹۱۲-۱۲۳-۴۵۶۷".into();
         let saved = save_patient(&db, None, &persian, 1000).unwrap();
         assert_eq!(saved.identity, SARA);
-        assert_eq!(saved.nationality, person::IRAN);
         assert_eq!(saved.first_name, "Sara");
         assert_eq!(saved.phone, "09121234567");
         assert_eq!(saved.sync_state, SYNC_NEW);
-        assert_eq!(saved.id, hex::encode(patient_id(Identity::National, SARA)));
+        assert_eq!(saved.id, hex::encode(patient_id(SARA)));
 
         // The same person added again is the same record, updated.
         let mut again = input(SARA);
@@ -636,15 +613,9 @@ mod tests {
     fn checks_input() {
         let db = database("checks");
         let key = |input: &PatientInput| save_patient(&db, None, input, 1).unwrap_err().key;
-        assert_eq!(key(&input("0012345678")), "person.errors.invalidNationalId");
-        let mut foreign = input("ab-12345");
-        foreign.identity_type = Identity::Foreign;
-        assert_eq!(key(&foreign), "person.errors.invalidNationality", "a foreign national needs a nationality");
-        foreign.nationality = "IR".into();
-        assert_eq!(key(&foreign), "person.errors.invalidNationality", "not Iranian");
-        foreign.nationality = "af".into();
-        let saved = save_patient(&db, None, &foreign, 1).unwrap();
-        assert_eq!((saved.identity.as_str(), saved.nationality.as_str()), ("AB12345", "AF"));
+        assert_eq!(key(&input("AB12")), "person.errors.invalidIdentityCode");
+        let saved = save_patient(&db, None, &input("ab-12345"), 1).unwrap();
+        assert_eq!(saved.identity, "AB12345");
 
         let mut bad = input(SARA);
         bad.first_name = "  ".into();
@@ -673,7 +644,7 @@ mod tests {
 
         // A typo fixed before syncing: new id, treatments follow.
         let fixed = save_patient(&db, Some(&saved.id), &input(OTHER), 3).unwrap();
-        assert_eq!(fixed.id, hex::encode(patient_id(Identity::National, OTHER)));
+        assert_eq!(fixed.id, hex::encode(patient_id(OTHER)));
         assert!(get_patient(&db, &parse_id(&saved.id, "x").unwrap()).unwrap().is_none());
         assert_eq!(list_treatments(&db, &fixed.id).unwrap().len(), 1);
 

@@ -29,14 +29,11 @@ export interface ClinicInput {
 }
 
 /**
- * How a person is identified (src-tauri/src/person.rs): Iranian citizens by national ID,
- * foreign nationals by their FIDA code plus their nationality (ISO 3166-1 alpha-2).
- * National IDs need no nationality: it is always "IR".
+ * How a person is identified (src-tauri/src/person.rs): by one identification code,
+ * e.g. a national ID or any other official code, unique across the whole system.
  */
 export interface PersonIdentityInput {
-  identityType: "national" | "foreign";
   identity: string;
-  nationality?: string;
 }
 
 /**
@@ -70,7 +67,7 @@ export interface MyClinic {
 /** The account's clinics (see MyClinics in src-tauri/src/setup.rs). */
 export interface MyClinics {
   fullName: string;
-  /** False only for old accounts: adding a clinic then needs their national ID. */
+  /** False only for old accounts: adding a clinic then needs their identification code. */
   identityOnFile: boolean;
   /** Owned ones first, then oldest first. */
   clinics: MyClinic[];
@@ -143,16 +140,5 @@ export const PHONE_PATTERN = /^\+?[0-9]{7,15}$/;
 /** Optional: empty or 5-10 digits. */
 export const POSTAL_CODE_PATTERN = /^([0-9]{5,10})?$/;
 
-/**
- * Iranian national ID: 10 digits, the last one a check digit. IDs made of one
- * repeated digit pass the check but are never issued.
- * Same check as validNationalID in dental-server/internal/service/installation.go.
- */
-export function isValidNationalId(id: string): boolean {
-  if (!/^[0-9]{10}$/.test(id) || id === id[0].repeat(10)) return false;
-  let sum = 0;
-  for (let i = 0; i < 9; i++) sum += Number(id[i]) * (10 - i);
-  const remainder = sum % 11;
-  const check = Number(id[9]);
-  return remainder < 2 ? check === remainder : check === 11 - remainder;
-}
+// Same rule as the server (dental-server/proto/dental/v1/person.proto).
+export const IDENTITY_CODE_PATTERN = /^[A-Z0-9]{5,20}$/;

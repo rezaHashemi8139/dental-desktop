@@ -26,7 +26,6 @@ use crate::api::{Api, ApiError};
 use crate::auth::{self, Session};
 use crate::localdb::{SYNC_CHANGED, SYNC_NEW, SYNC_REJECTED, SYNC_SYNCED};
 use crate::message::Message;
-use crate::patients::Identity;
 use crate::{clock, proto};
 
 /// The event the frontend listens to; its payload is a `SyncStatus`.
@@ -90,23 +89,17 @@ impl Outbox {
 const WAITING: &str = "sync_state IN ('new', 'changed')";
 
 fn patient_to_proto(row: &Row) -> rusqlite::Result<(proto::Patient, i64)> {
-    let identity_type: String = row.get(1)?;
-    let updated_at: i64 = row.get(11)?;
-    let identity = proto::PersonIdentity {
-        r#type: Identity::parse(&identity_type).map_or(0, |i| i.to_proto() as i32),
-        number: row.get(2)?,
-        nationality: row.get(3)?,
-    };
+    let updated_at: i64 = row.get(9)?;
     let patient = proto::Patient {
         id: row.get(0)?,
-        identity: Some(identity),
-        first_name: row.get(4)?,
-        last_name: row.get(5)?,
-        birth_date: row.get(6)?,
-        gender: gender_to_proto(&row.get::<_, String>(7)?) as i32,
-        phone: row.get(8)?,
-        address: row.get(9)?,
-        medical_notes: row.get(10)?,
+        identity: Some(proto::PersonIdentity { number: row.get(1)? }),
+        first_name: row.get(2)?,
+        last_name: row.get(3)?,
+        birth_date: row.get(4)?,
+        gender: gender_to_proto(&row.get::<_, String>(5)?) as i32,
+        phone: row.get(6)?,
+        address: row.get(7)?,
+        medical_notes: row.get(8)?,
         updated_at: Some(timestamp(updated_at)),
     };
     Ok((patient, updated_at))
@@ -135,8 +128,7 @@ pub fn outbox(db: &Connection) -> rusqlite::Result<Outbox> {
     let mut sent = Vec::new();
 
     let mut statement = db.prepare(&format!(
-        "SELECT id, identity_type, identity, nationality, first_name, last_name, birth_date, gender, phone,
-                address, medical_notes, updated_at
+        "SELECT id, identity, first_name, last_name, birth_date, gender, phone, address, medical_notes, updated_at
          FROM patients WHERE {WAITING} ORDER BY updated_at LIMIT ?1"
     ))?;
     for row in statement.query_map([BATCH as i64], patient_to_proto)? {
@@ -209,14 +201,13 @@ pub fn apply_pull(db: &Connection, response: &proto::PullResponse, now: i64) -> 
     let tx = db.unchecked_transaction()?;
     for patient in &response.patients {
         let Some(identity) = patient.identity.as_ref() else { continue };
-        let Some(identity_type) = Identity::from_proto(identity.r#type) else { continue };
         tx.execute(
             &format!(
-                "INSERT INTO patients (id, identity_type, identity, nationality, first_name, last_name, birth_date,
-                    gender, phone, address, medical_notes, updated_at, created_at, sync_state)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 'synced')
+                "INSERT INTO patients (id, identity, first_name, last_name, birth_date, gender, phone, address,
+                    medical_notes, updated_at, created_at, sync_state)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'synced')
                  ON CONFLICT (id) DO UPDATE SET
-                    nationality = excluded.nationality, first_name = excluded.first_name,
+                    first_name = excluded.first_name,
                     last_name = excluded.last_name, birth_date = excluded.birth_date, gender = excluded.gender,
                     phone = excluded.phone, address = excluded.address, medical_notes = excluded.medical_notes,
                     updated_at = excluded.updated_at, sync_state = 'synced'
@@ -224,9 +215,7 @@ pub fn apply_pull(db: &Connection, response: &proto::PullResponse, now: i64) -> 
             ),
             params![
                 patient.id,
-                identity_type.as_str(),
                 identity.number,
-                identity.nationality,
                 patient.first_name,
                 patient.last_name,
                 patient.birth_date,
@@ -509,9 +498,7 @@ mod tests {
 
     fn patient(first_name: &str) -> PatientInput {
         PatientInput {
-            identity_type: Identity::National,
             identity: "0012345679".into(),
-            nationality: String::new(),
             first_name: first_name.into(),
             last_name: "Ahmadi".into(),
             birth_date: String::new(),
@@ -548,7 +535,7 @@ mod tests {
         let first = outbox(&db).unwrap();
         assert_eq!((first.request.patients.len(), first.request.treatments.len()), (1, 1));
         let sent = &first.request.patients[0];
-        assert_eq!(sent.identity.as_ref().unwrap().nationality, "IR");
+        assert_eq!(sent.identity.as_ref().unwrap().number, "0012345679");
         assert_eq!(millis(&sent.updated_at), Some(1000));
 
         // Changed while the push was on its way: stays waiting.
@@ -598,14 +585,10 @@ mod tests {
     }
 
     fn pulled_patient(first_name: &str, updated_at: i64) -> proto::Patient {
-        let id = patients::patient_id(Identity::National, "0012345679");
+        let id = patients::patient_id("0012345679");
         proto::Patient {
             id: id.to_vec(),
-            identity: Some(proto::PersonIdentity {
-                r#type: proto::IdentityType::National as i32,
-                number: "0012345679".into(),
-                nationality: "IR".into(),
-            }),
+            identity: Some(proto::PersonIdentity { number: "0012345679".into() }),
             first_name: first_name.into(),
             last_name: "Ahmadi".into(),
             birth_date: String::new(),
@@ -636,7 +619,7 @@ mod tests {
         assert_eq!(cursor(&db).unwrap(), 7);
 
         // A local change not sent yet, newer than the server's: kept.
-        let id = hex::encode(patients::patient_id(Identity::National, "0012345679"));
+        let id = hex::encode(patients::patient_id("0012345679"));
         patients::save_patient(&db, Some(&id), &patient("Local"), 3000).unwrap();
         apply_pull(&db, &response(pulled_patient("Older", 2000), 8), 5).unwrap();
         assert_eq!((first_name(&db), state(&db, "patients")), ("Local".into(), SYNC_CHANGED.into()));
@@ -648,7 +631,7 @@ mod tests {
         // A treatment deleted elsewhere arrives as a tombstone.
         let treatment = proto::Treatment {
             id: vec![1; 16],
-            patient_id: patients::patient_id(Identity::National, "0012345679").to_vec(),
+            patient_id: patients::patient_id("0012345679").to_vec(),
             performed_by: vec![],
             performed_at: Some(timestamp(100)),
             tooth: String::new(),

@@ -14,7 +14,7 @@ use crate::api::ApiError;
 use crate::auth::{server_error, Context};
 use crate::device;
 use crate::message::Message;
-use crate::person::{self, Identity};
+use crate::person;
 use crate::proto;
 use crate::vault::Installation;
 
@@ -49,14 +49,10 @@ pub enum SetupTarget {
 #[serde(rename_all = "camelCase")]
 pub struct NewClinicInput {
     pub clinic: ClinicInput,
-    /// Only for accounts without an identity on file (`MyClinics::identity_on_file`);
-    /// empty otherwise.
-    #[serde(default)]
-    pub identity_type: Identity,
+    /// The identification code, only for accounts without an identity on file
+    /// (`MyClinics::identity_on_file`); empty otherwise.
     #[serde(default)]
     pub identity: String,
-    #[serde(default)]
-    pub nationality: String,
 }
 
 #[derive(Deserialize)]
@@ -235,7 +231,7 @@ pub async fn setup(
             let identity = if input.identity.trim().is_empty() {
                 None
             } else {
-                Some(person::to_proto(input.identity_type, &input.identity, &input.nationality)?)
+                Some(person::to_proto(&input.identity)?)
             };
             (Target::Clinic(input.clinic.to_proto()), identity)
         }

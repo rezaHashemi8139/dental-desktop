@@ -189,22 +189,28 @@ pub fn compact(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch("VACUUM")
 }
 
+/// One schema change: SQL, or Rust code for what SQL cannot do alone.
+enum Migration {
+    Sql(&'static str),
+    Code(fn(&Connection) -> rusqlite::Result<()>),
+}
+
 /// Schema changes, applied in order. PRAGMA user_version holds how many have run.
 /// Every primary key must be globally unique (random ids, never local counters),
 /// so a backup can be merged into another clinic database (`merge_contents`).
-const MIGRATIONS: &[&str] = &[
+const MIGRATIONS: &[Migration] = &[
     // 1: users of this installation. Roles are kept only here, never on the server.
-    "CREATE TABLE users (
+    Migration::Sql("CREATE TABLE users (
         id            BLOB PRIMARY KEY,   -- server user id (16 bytes)
         username      TEXT NOT NULL,
         full_name     TEXT NOT NULL DEFAULT '',
         role          TEXT NOT NULL,
         created_at    INTEGER NOT NULL,   -- unix seconds
         last_login_at INTEGER
-    );",
+    );"),
     // 2: patients and treatments, synced with the server (sync.rs), and where pulling stopped.
     // `sync_state` is one of the SYNC_* values below.
-    "CREATE TABLE patients (
+    Migration::Sql("CREATE TABLE patients (
         id            BLOB PRIMARY KEY,   -- derived from the identity (patients::patient_id), 16 bytes
         identity_type TEXT NOT NULL,      -- 'national' or 'foreign'
         identity      TEXT NOT NULL,      -- national ID, or a foreign national's FIDA code
@@ -239,8 +245,43 @@ const MIGRATIONS: &[&str] = &[
     CREATE TABLE sync_cursors (
         scope    TEXT PRIMARY KEY,        -- what was pulled, e.g. 'clinic'
         revision INTEGER NOT NULL         -- PullResponse.revision of the last pull
-    );",
+    );"),
+    // 3: people are identified by one code (person.rs); identity_type and nationality go.
+    Migration::Code(identity_code),
 ];
+
+/// Migration 3. Patient ids are now derived from the code alone (patients::patient_id),
+/// so every patient gets its new id, and their treatments follow, the same as the
+/// server's migration 00015_identity_code.sql. The server sends every patient and
+/// treatment again under the new ids, which then meet the local ones. Codes are kept
+/// as they were (a national ID stays its 10 digits).
+fn identity_code(db: &Connection) -> rusqlite::Result<()> {
+    let patients: Vec<(Vec<u8>, String)> = {
+        let mut statement = db.prepare("SELECT id, identity FROM patients ORDER BY updated_at DESC")?;
+        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        rows.collect::<rusqlite::Result<_>>()?
+    };
+    let mut seen = std::collections::HashSet::new();
+    for (old, code) in patients {
+        let new = crate::patients::patient_id(&code);
+        db.execute("UPDATE treatments SET patient_id = ?2 WHERE patient_id = ?1", params![old, new])?;
+        if seen.insert(new) {
+            db.execute("UPDATE patients SET id = ?2 WHERE id = ?1", params![old, new])?;
+        } else {
+            // The same code under both old types: one person now, the latest change kept.
+            db.execute("DELETE FROM patients WHERE id = ?1", [old])?;
+        }
+    }
+    db.execute_batch(
+        // Refused patients were never stored by the server; the old rules (e.g. the
+        // national ID check digit) may be why, so they are sent again.
+        "UPDATE patients SET sync_state = 'new' WHERE sync_state = 'rejected';
+         DROP INDEX patients_identity;
+         ALTER TABLE patients DROP COLUMN identity_type;
+         ALTER TABLE patients DROP COLUMN nationality;
+         CREATE UNIQUE INDEX patients_identity ON patients (identity);",
+    )
+}
 
 /// `sync_state` of a synced record that the server has never stored: new here, or
 /// refused so far. A patient's identity may still change (see patients::save_patient).
@@ -277,9 +318,12 @@ pub fn schema_version(conn: &Connection, schema: &str) -> rusqlite::Result<i64> 
 
 pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     let applied = schema_version(conn, "main")?;
-    for (index, sql) in MIGRATIONS.iter().enumerate().skip(applied as usize) {
+    for (index, migration) in MIGRATIONS.iter().enumerate().skip(applied as usize) {
         let tx = conn.unchecked_transaction()?;
-        tx.execute_batch(sql)?;
+        match migration {
+            Migration::Sql(sql) => tx.execute_batch(sql)?,
+            Migration::Code(run) => run(&tx)?,
+        }
         tx.pragma_update(None, "user_version", index as i64 + 1)?;
         tx.commit()?;
     }
@@ -427,6 +471,63 @@ mod tests {
             let columns = column_names(&conn, "main", table).unwrap();
             assert!(columns.contains(&"updated_at".to_string()) && columns.contains(&"sync_state".to_string()));
         }
+    }
+
+    /// Migration 3: patients get the ids the server gives them now, and their treatments follow.
+    #[test]
+    fn identity_code_migration_recomputes_patient_ids() {
+        let dir = std::env::temp_dir().join(format!("dental-localdb-identity-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let conn = Connection::open(dir.join(DATABASE_FILE)).unwrap();
+        apply_key(&conn, &[10u8; 32]).unwrap();
+        for migration in &MIGRATIONS[..2] {
+            let Migration::Sql(sql) = migration else { unreachable!() };
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 2).unwrap();
+
+        // Under the old schema: a national ID, a FIDA code refused by the server, and
+        // the same number once more under the other type (an older change).
+        let patient = |id: u8, kind: &str, code: &str, nationality: &str, updated_at: i64, state: &str| {
+            conn.execute(
+                "INSERT INTO patients (id, identity_type, identity, nationality, first_name, last_name,
+                    created_at, updated_at, sync_state)
+                 VALUES (?1, ?2, ?3, ?4, 'A', 'B', 1, ?5, ?6)",
+                params![[id; 16], kind, code, nationality, updated_at, state],
+            )
+            .unwrap();
+        };
+        patient(1, "national", "0012345679", "IR", 20, SYNC_SYNCED);
+        patient(2, "foreign", "AB12345", "AF", 10, SYNC_REJECTED);
+        patient(3, "foreign", "0012345679", "AF", 5, SYNC_NEW);
+        for (treatment, patient) in [(7u8, 1u8), (8, 3)] {
+            conn.execute(
+                "INSERT INTO treatments (id, patient_id, performed_at, procedure, created_at, updated_at, sync_state)
+                 VALUES (?1, ?2, 1, 'Filling', 1, 1, 'synced')",
+                params![[treatment; 16], [patient; 16]],
+            )
+            .unwrap();
+        }
+
+        migrate(&conn).unwrap();
+        assert_eq!(schema_version(&conn, "main").unwrap(), latest_schema_version());
+        let national = crate::patients::patient_id("0012345679").to_vec();
+        let foreign = crate::patients::patient_id("AB12345").to_vec();
+        let mut statement = conn.prepare("SELECT id, sync_state FROM patients ORDER BY identity").unwrap();
+        let rows: Vec<(Vec<u8>, String)> =
+            statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?))).unwrap().map(Result::unwrap).collect();
+        assert_eq!(rows, [(national.clone(), SYNC_SYNCED.to_owned()), (foreign, SYNC_NEW.to_owned())]);
+        let treatment_patients: Vec<Vec<u8>> = conn
+            .prepare("SELECT patient_id FROM treatments")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(treatment_patients, [national.clone(), national]);
+        let columns = column_names(&conn, "main", "patients").unwrap();
+        assert!(!columns.iter().any(|c| c == "identity_type" || c == "nationality"));
     }
 
     #[test]

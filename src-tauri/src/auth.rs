@@ -21,7 +21,7 @@ use zeroize::Zeroizing;
 use crate::api::{Api, ApiError};
 use crate::connectivity::ConnectivityStatus;
 use crate::message::Message;
-use crate::person::{self, Identity};
+use crate::person;
 use crate::proto;
 use crate::secure::{self, KeyPair, KEY_LEN};
 use crate::vault::{DatabaseKey, Installation, Vault, VaultEntry};
@@ -237,7 +237,6 @@ pub(crate) fn server_error(code: &str, reason: &str) -> Message {
         "weak_password" => err("auth.errors.weakPassword"),
         "license_number_taken" => err("setup.errors.licenseNumberTaken"),
         "identity_taken" => err("person.errors.identityTaken"),
-        "invalid_national_id" => err("person.errors.invalidNationalId"),
         "identity_mismatch" => err("person.errors.identityMismatch"),
         "identity_required" => err("setup.errors.identityRequired"),
         "clinic_not_found" => err("setup.errors.clinicNotFound"),
@@ -294,12 +293,8 @@ pub struct SignUpInput {
     pub username: String,
     pub password: String,
     pub full_name: String,
-    #[serde(default)]
-    pub identity_type: Identity,
+    /// The identification code (person.rs).
     pub identity: String,
-    /// Only for foreign nationals.
-    #[serde(default)]
-    pub nationality: String,
     pub phone: String,
 }
 
@@ -392,7 +387,7 @@ pub async fn sign_up(ctx: &Context, account: &SignUpInput) -> Result<(), Message
         username: account.username.trim().to_owned(),
         password: account.password.clone(),
         full_name: account.full_name.trim().to_owned(),
-        identity: Some(person::to_proto(account.identity_type, &account.identity, &account.nationality)?),
+        identity: Some(person::to_proto(&account.identity)?),
         phone: account.phone.trim().to_owned(),
     };
     match ctx.api.sign_up(&request).await {
@@ -900,15 +895,9 @@ mod e2e {
         format!("{name}{}", clock::now_unix() % 1_000_000)
     }
 
-    /// A national ID with a valid check digit, different for each `n` below 10^8.
-    fn national_id(n: u64) -> String {
-        let digits = format!("1{:08}", n % 100_000_000);
-        let sum: u32 = digits.bytes().enumerate().map(|(i, d)| u32::from(d - b'0') * (10 - i as u32)).sum();
-        let check = match sum % 11 {
-            r if r < 2 => r,
-            r => 11 - r,
-        };
-        format!("{digits}{check}")
+    /// An identification code, different for each `n` below 10^8.
+    fn identity_code(n: u64) -> String {
+        format!("T{:08}", n % 100_000_000)
     }
 
     /// The login screen as the app would decide it: after a real connectivity check.
@@ -935,9 +924,7 @@ mod e2e {
             username: doctor.clone(),
             password: "Doctor-passw0rd".into(),
             full_name: "Dr. Test".into(),
-            identity_type: Identity::National,
-            identity: national_id(clock::now_unix() as u64),
-            nationality: String::new(),
+            identity: identity_code(clock::now_unix() as u64),
             phone: "09121234567".into(),
         };
         sign_up(&online, &account).await.unwrap();
@@ -959,9 +946,7 @@ mod e2e {
                 latitude: 35.6892,
                 longitude: 51.389,
             },
-            identity_type: Identity::National,
             identity: String::new(),
-            nationality: String::new(),
         });
         // A first clinic starts a free plan by itself when the server has one on sale.
         let trial = setup::setup(&online, &doctor, "Doctor-passw0rd", &target).await.unwrap();
