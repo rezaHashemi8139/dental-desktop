@@ -481,6 +481,8 @@ pub struct PatientHistory {
     pub last_name: String,
     pub birth_date: String,
     pub gender: String,
+    pub phone: String,
+    pub address: String,
     pub medical_notes: String,
     /// Newest first.
     pub treatments: Vec<HistoryEntry>,
@@ -517,6 +519,8 @@ pub fn history_from_proto(response: crate::proto::GetPatientHistoryResponse) -> 
             Ok(crate::proto::Gender::Female) => "female".to_owned(),
             _ => String::new(),
         },
+        phone: patient.phone,
+        address: patient.address,
         medical_notes: patient.medical_notes,
         treatments: response
             .treatments

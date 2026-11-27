@@ -350,6 +350,26 @@ pub fn record_login(
         .map(|role| role.unwrap_or_else(|| default_role.to_owned()))
 }
 
+/// A user who has logged in on this installation, sent to the frontend.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalUser {
+    /// Server user id, 32 hex digits.
+    pub id: String,
+    pub username: String,
+    pub full_name: String,
+}
+
+/// Everyone who has logged in here, by name: who can be picked as having
+/// performed a treatment, and whose names treatments show.
+pub fn list_users(conn: &Connection) -> rusqlite::Result<Vec<LocalUser>> {
+    let mut statement = conn.prepare("SELECT id, username, full_name FROM users ORDER BY full_name, username")?;
+    let rows = statement.query_map([], |row| {
+        Ok(LocalUser { id: hex::encode(row.get::<_, Vec<u8>>(0)?), username: row.get(1)?, full_name: row.get(2)? })
+    })?;
+    rows.collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -377,6 +397,8 @@ mod tests {
         let conn = open(&path, &key2).unwrap();
         // The role stays as stored, even if a different default is passed later.
         assert_eq!(record_login(&conn, &[7; 16], "doctor", "Dr. A", ROLE_STAFF, 200).unwrap(), ROLE_MANAGER);
+        let users = list_users(&conn).unwrap();
+        assert_eq!(users, [LocalUser { id: hex::encode([7; 16]), username: "doctor".into(), full_name: "Dr. A".into() }]);
     }
 
     /// Reconnecting an offline session (auth::switch_online) rekeys the connection it keeps open.

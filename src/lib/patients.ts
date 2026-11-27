@@ -75,6 +75,8 @@ export interface PatientHistory {
   lastName: string;
   birthDate: string;
   gender: Gender;
+  phone: string;
+  address: string;
   medicalNotes: string;
   /** Newest first. */
   treatments: {
@@ -117,6 +119,21 @@ export function saveTreatment(treatment: TreatmentInput, id?: string): Promise<T
 export function deleteTreatment(id: string): Promise<void> {
   return invoke("delete_treatment", { id });
 }
+
+/** Someone who has logged in on this computer (see LocalUser in src-tauri/src/localdb.rs). */
+export interface LocalUser {
+  id: string;
+  username: string;
+  fullName: string;
+}
+
+/** Everyone who has logged in on this computer: who can be picked as having performed a treatment. */
+export function listLocalUsers(): Promise<LocalUser[]> {
+  return invoke<LocalUser[]>("list_local_users");
+}
+
+/** Records per list (LIST_LIMIT in src-tauri/src/patients.rs): more means the search should be narrower. */
+export const PATIENT_LIST_LIMIT = 200;
 
 /**
  * A patient's treatments in every clinic. Needs an online session; the server

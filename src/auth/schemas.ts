@@ -90,6 +90,44 @@ export const clinicWithIdentitySchema = z.object({ ...clinicFields, identityCode
 
 export type ClinicValues = z.infer<typeof clinicWithIdentitySchema>;
 
+// --- Patients (src/components/patient-dialog.tsx, treatment-dialog.tsx) -----
+
+// Rust checks lengths again (src-tauri/src/patients.rs); the inputs' maxLength keeps them in range.
+
+/** A date field's value: "" when empty, null while incomplete or not a real day (src/components/date-field.tsx). */
+const optionalDate = z.string().nullable().refine((v) => v !== null, message("patients.errors.invalidBirthDate"));
+
+export const patientSchema = z.object({
+  identityCode,
+  firstName: z.string().trim().min(1, message("patients.errors.nameRequired")),
+  lastName: z.string().trim().min(1, message("patients.errors.nameRequired")),
+  birthDate: optionalDate,
+  gender: z.enum(["", "male", "female"]),
+  // Empty, or the same rule as the clinic's phone.
+  phone: z
+    .string()
+    .transform((v) => v.replace(/[\s-]/g, ""))
+    .pipe(z.string().refine((v) => v === "" || PHONE_PATTERN.test(v), message("patients.errors.invalidPhone"))),
+  address: z.string().trim(),
+  medicalNotes: z.string().trim(),
+});
+/** As the form holds them (the birth date may be null while being typed). */
+export type PatientFormValues = z.input<typeof patientSchema>;
+export type PatientValues = z.infer<typeof patientSchema>;
+
+export const treatmentSchema = z.object({
+  performedOn: z
+    .string()
+    .nullable()
+    .refine((v) => !!v, message("treatments.errors.invalidDate")),
+  tooth: z.string().trim(),
+  procedure: z.string().trim().min(1, message("treatments.errors.procedureRequired")),
+  notes: z.string().trim(),
+  /** A LocalUser id, or "" if not given. */
+  performedBy: z.string(),
+});
+export type TreatmentValues = z.infer<typeof treatmentSchema>;
+
 // --- Subscription purchase (src/components/purchase-dialog.tsx) -------------
 
 /** A transfer the owner made, as reported. The amount is the quote's, never typed. */

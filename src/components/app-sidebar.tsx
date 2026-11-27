@@ -1,5 +1,5 @@
 import { Link, type LinkProps } from "@tanstack/react-router";
-import { CreditCardIcon, DatabaseIcon, HouseIcon, type LucideIcon } from "lucide-react";
+import { CreditCardIcon, DatabaseIcon, HouseIcon, UsersIcon, type LucideIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useSession } from "@/auth/store";
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,7 @@ export function AppSidebar() {
     <aside className="flex w-60 shrink-0 flex-col overflow-y-auto border-e bg-muted/40 p-3">
       <nav aria-label={t("nav.label")} className="flex flex-col gap-1">
         {!restricted && <SidebarLink to="/home" icon={HouseIcon} label={t("nav.home")} />}
+        {!restricted && <SidebarLink to="/patients" icon={UsersIcon} label={t("nav.patients")} />}
         {!restricted && <SidebarLink to="/database" icon={DatabaseIcon} label={t("nav.database")} />}
         {session?.isOwner && <SidebarLink to="/subscription" icon={CreditCardIcon} label={t("nav.subscription")} />}
       </nav>

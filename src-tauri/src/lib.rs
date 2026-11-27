@@ -177,6 +177,14 @@ fn save_treatment(
     Ok(saved)
 }
 
+/// Everyone who has logged in on this computer: who may have performed a treatment.
+#[tauri::command]
+fn list_local_users(state: State<'_, AuthState>) -> Result<Vec<localdb::LocalUser>, Message> {
+    with_session(&state, |session| {
+        localdb::list_users(&session.db).map_err(|e| Message::error("errors.unknown", e))
+    })
+}
+
 #[tauri::command]
 fn delete_treatment(app: AppHandle, state: State<'_, AuthState>, id: String) -> Result<(), Message> {
     with_session(&state, |session| patients::delete_treatment(&session.db, &id, clock::now_millis()))?;
@@ -752,6 +760,7 @@ pub fn run() {
             save_treatment,
             delete_treatment,
             patient_history,
+            list_local_users,
             languages::get_language_catalog,
             languages::list_installed_languages,
             languages::install_language,

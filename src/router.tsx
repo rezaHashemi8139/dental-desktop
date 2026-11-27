@@ -13,6 +13,8 @@ import { AppLayout } from "@/pages/app-layout";
 import { AuthLayout, CheckingConnection, LoginPage, RegisterPage } from "@/pages/auth-layout";
 import { DatabasePage } from "@/pages/database-page";
 import { HomePage } from "@/pages/home-page";
+import { PatientPage } from "@/pages/patient-page";
+import { PatientsPage } from "@/pages/patients-page";
 import { SubscriptionPage } from "@/pages/subscription-page";
 
 /**
@@ -22,6 +24,8 @@ import { SubscriptionPage } from "@/pages/subscription-page";
  * /login       ┐ "auth" layout: only when logged out; checks the server first,
  * /register    ┘ then follows connectivity changes by itself
  * /home        ┐ "app" layout (sidebar): only when logged in; pages read the session with useSession()
+ * /patients    │ the clinic's patients, searched by name or code
+ * /patients/$patientId │ one patient: details, treatments, history in every clinic
  * /database    │ backups and clearing the clinic database
  * /subscription┘ the owner's subscription; the only page of a restricted (billing-only) login
  *
@@ -102,6 +106,18 @@ const homeRoute = createRoute({
   component: HomePage,
 });
 
+const patientsRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "patients",
+  component: PatientsPage,
+});
+
+const patientRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "patients/$patientId",
+  component: PatientPage,
+});
+
 const databaseRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "database",
@@ -117,7 +133,7 @@ const subscriptionRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   indexRoute,
   authRoute.addChildren([loginRoute, registerRoute]),
-  appRoute.addChildren([homeRoute, databaseRoute, subscriptionRoute]),
+  appRoute.addChildren([homeRoute, patientsRoute, patientRoute, databaseRoute, subscriptionRoute]),
 ]);
 
 export const router = createRouter({
