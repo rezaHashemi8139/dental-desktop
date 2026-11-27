@@ -65,11 +65,15 @@ const MOTION = {
   maxSpeed: 24,
   /** How quickly a pushed shape settles back to its cruising speed (per second). */
   settle: 0.6,
+  /** Never faster than this, however hard the pointer pushes. */
+  topSpeed: 90,
   /** The pointer pushes shapes within this distance away, harder the closer they are. */
   pointerRadius: 180,
   pointerPush: 420,
   /** Turning speed range; `spin` shapes turn three times faster. */
   maxTurn: 10,
+  /** Shapes never pass over each other: they bounce off when this close (between their edges). */
+  gap: 12,
 } as const;
 
 /** Where a shape is and how it moves. */
@@ -127,7 +131,8 @@ function step(body: Body, size: number, dt: number, width: number, height: numbe
   }
 
   const speed = Math.hypot(body.vx, body.vy) || 1;
-  const settled = 1 + (body.cruise / speed - 1) * Math.min(1, MOTION.settle * dt);
+  const settled =
+    Math.min(1 + (body.cruise / speed - 1) * Math.min(1, MOTION.settle * dt), MOTION.topSpeed / speed);
   body.vx *= settled;
   body.vy *= settled;
 
@@ -144,11 +149,56 @@ function step(body: Body, size: number, dt: number, width: number, height: numbe
 }
 
 /**
+ * Two shapes closer than their sizes plus the gap (each taken as a disc as wide
+ * as the shape): moved apart, the bigger one less, and, if they were coming
+ * together, bounced back away from each other along the line between them, as
+ * in an elastic collision of discs weighing as much as their area.
+ */
+function collide(a: Body, aSize: number, b: Body, bSize: number) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const minDistance = (aSize + bSize) / 2 + MOTION.gap;
+  const distance = Math.hypot(dx, dy);
+  if (distance >= minDistance) return;
+
+  // From a to b; exactly on top of each other, any direction will do.
+  const [nx, ny] = distance > 0 ? [dx / distance, dy / distance] : [1, 0];
+  const aMass = aSize * aSize;
+  const bMass = bSize * bSize;
+  const total = aMass + bMass;
+
+  const overlap = minDistance - distance;
+  a.x -= nx * overlap * (bMass / total);
+  a.y -= ny * overlap * (bMass / total);
+  b.x += nx * overlap * (aMass / total);
+  b.y += ny * overlap * (aMass / total);
+
+  // How fast they close in along that line; already moving apart, nothing to bounce.
+  const closing = (a.vx - b.vx) * nx + (a.vy - b.vy) * ny;
+  if (closing <= 0) return;
+  const impulse = (2 * closing) / total;
+  a.vx -= impulse * bMass * nx;
+  a.vy -= impulse * bMass * ny;
+  b.vx += impulse * aMass * nx;
+  b.vy += impulse * aMass * ny;
+}
+
+/** Every pair of shapes that touch bounces apart (`collide`). */
+function collideAll(bodies: Body[]) {
+  for (let i = 0; i < bodies.length; i++) {
+    for (let j = i + 1; j < bodies.length; j++) {
+      collide(bodies[i], SHAPES[i].size, bodies[j], SHAPES[j].size);
+    }
+  }
+}
+
+/**
  * Decoration behind the login, sign-up, setup and lock screens and the logged-in
  * pages (src/pages/app-layout.tsx): two soft lights
  * moving in the logo's colours, and flat outline shapes of a dental clinic
  * (teeth, toothbrush, stethoscope, medical crosses...) drifting slowly all over
- * the screen, turning as they go, and gently pushed aside by the mouse. Animated
+ * the screen, turning as they go, bouncing off each other instead of passing
+ * over one another, and gently pushed aside by the mouse. Animated
  * on every frame without re-rendering; still when the system asks for reduced
  * motion. Hidden from screen readers and never takes clicks (the pointer is
  * followed on the window).
@@ -163,6 +213,8 @@ export function AuthBackdrop() {
     let width = container.clientWidth;
     let height = container.clientHeight;
     const bodies = startBodies(width, height);
+    // On a small screen the grid cells can be smaller than the shapes: spread out first.
+    for (let i = 0; i < 30; i++) collideAll(bodies);
 
     const draw = () =>
       bodies.forEach((body, i) => {
@@ -202,6 +254,7 @@ export function AuthBackdrop() {
       const dt = Math.min((now - last) / 1000, 0.05);
       last = now;
       bodies.forEach((body, i) => step(body, SHAPES[i].size, dt, width, height, pointer));
+      collideAll(bodies);
       draw();
       frame = requestAnimationFrame(tick);
     };

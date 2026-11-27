@@ -24,6 +24,8 @@ import {
   listWorkHours,
   localMidnight,
   saveWorkHours,
+  workHoursSummary,
+  type UserTotal,
   type WorkHours,
   type WorkHoursList,
 } from "@/lib/work-hours";
@@ -58,8 +60,9 @@ interface Day {
  * a time, by day, with each day's notes and the month's total. Entries and exits
  * are recorded with one click at the current time or typed in, any number a day
  * but in order: no new entry until the last one has its exit. Everything here
- * stays on this computer: it is never sent to the server. Everyone sees their own
- * hours; a manager can pick anyone. A clinic admin can also add a new user here,
+ * stays on this computer: it is never sent to the server. Everyone sees everyone's
+ * month totals and can open anyone's entries, but changes only their own; a
+ * manager can change anyone's (src-tauri/src/work_hours.rs checks it again). A clinic admin can also add a new user here,
  * which does go to the server (only that user's own details).
  */
 export function WorkHoursPage() {
@@ -73,12 +76,16 @@ export function WorkHoursPage() {
   // Any moment in the month shown: the month itself follows the calendar.
   const [anchor, setAnchor] = useState(() => Date.now());
   const [list, setList] = useState<WorkHoursList | null>(null);
+  // Everyone's totals of the month.
+  const [summary, setSummary] = useState<UserTotal[] | null>(null);
   const [error, setError] = useState<RustMessage | null>(null);
   const [open, setOpen] = useState<Open | null>(null);
   const [busy, setBusy] = useState(false);
 
   const month = calendarMonth(anchor, calendar);
   const isManager = session?.role === "manager";
+  // Whether the hours shown may be changed here: one's own, or anyone's for a manager.
+  const canChange = isManager || userId === session?.userId;
 
   const loadUsers = useCallback(() => {
     listLocalUsers().then(setUsers, (e) => setError(toRustMessage(e)));
@@ -88,7 +95,10 @@ export function WorkHoursPage() {
   const load = useCallback(async () => {
     if (!userId) return;
     try {
-      setList(await listWorkHours(userId, { start: month.start, end: month.end }));
+      const period = { start: month.start, end: month.end };
+      const [found, totals] = await Promise.all([listWorkHours(userId, period), workHoursSummary(period)]);
+      setList(found);
+      setSummary(totals);
       setError(null);
     } catch (e) {
       setError(toRustMessage(e));
@@ -162,22 +172,18 @@ export function WorkHoursPage() {
 
       <CardContent className="flex flex-col gap-4">
         <div className="flex flex-wrap items-center gap-3">
-          {isManager ? (
-            <Select value={userId} onValueChange={setUserId}>
-              <SelectTrigger className="min-w-48" aria-label={t("workHours.user")}>
-                <SelectValue placeholder={t("workHours.user")} />
-              </SelectTrigger>
-              <SelectContent>
-                {users.map((user) => (
-                  <SelectItem key={user.id} value={user.id}>
-                    {user.fullName || user.username}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          ) : (
-            <span className="text-sm font-medium">{session.fullName || session.username}</span>
-          )}
+          <Select value={userId} onValueChange={setUserId}>
+            <SelectTrigger className="min-w-48" aria-label={t("workHours.user")}>
+              <SelectValue placeholder={t("workHours.user")} />
+            </SelectTrigger>
+            <SelectContent>
+              {users.map((user) => (
+                <SelectItem key={user.id} value={user.id}>
+                  {user.fullName || user.username}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <div className="ms-auto flex items-center gap-1">
             <Button variant="ghost" size="icon" aria-label={t("workHours.previousMonth")} onClick={() => setAnchor(month.start - 1)}>
               <ChevronRightIcon className="ltr:rotate-180" />
@@ -197,6 +203,36 @@ export function WorkHoursPage() {
           </div>
         </div>
 
+        {summary && summary.length > 0 && (
+          <section className="flex flex-col gap-2" aria-labelledby="work-hours-everyone">
+            <h3 id="work-hours-everyone" className="text-sm font-medium">
+              {t("workHours.everyone")}
+            </h3>
+            <ul className="flex flex-col divide-y rounded-lg border">
+              {summary.map((total) => (
+                <li key={total.userId}>
+                  <button
+                    type="button"
+                    aria-current={total.userId === userId ? "true" : undefined}
+                    onClick={() => setUserId(total.userId)}
+                    className="flex w-full items-center gap-3 px-3 py-2 text-start transition-colors outline-none first:rounded-t-lg last:rounded-b-lg hover:bg-accent focus-visible:ring-3 focus-visible:ring-ring/50 aria-current:bg-accent"
+                  >
+                    <span className="min-w-0 flex-1 truncate text-sm font-medium">{userName(total.userId)}</span>
+                    {total.atWork && <Badge variant="secondary">{t("workHours.ongoing")}</Badge>}
+                    <span className="text-xs text-muted-foreground">{t("workHours.days", { days: number(total.days) })}</span>
+                    <span className="min-w-28 text-end text-sm font-semibold whitespace-nowrap">{duration(total.totalMillis)}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <p className="text-xs text-muted-foreground">{t("workHours.everyoneHint")}</p>
+          </section>
+        )}
+
+        {list && (
+          <h3 className="-mb-2 text-sm font-medium">{t("workHours.entriesOf", { name: userName(userId) })}</h3>
+        )}
+
         {list && (
           <div className="flex flex-col gap-2 rounded-lg border p-3">
             <div className="flex flex-wrap items-center gap-2">
@@ -207,29 +243,34 @@ export function WorkHoursPage() {
                     })
                   : t("workHours.notAtWork")}
               </span>
-              {list.open ? (
-                <Button variant="outline" onClick={() => setOpen({ kind: "entry", entry: list.open! })}>
-                  <PencilIcon data-icon="inline-start" />
-                  {t("workHours.typeExit")}
-                </Button>
-              ) : (
-                <Button variant="outline" onClick={() => setOpen({ kind: "entry" })}>
-                  <PlusIcon data-icon="inline-start" />
-                  {t("workHours.add")}
-                </Button>
+              {canChange && (
+                <>
+                  {list.open ? (
+                    <Button variant="outline" onClick={() => setOpen({ kind: "entry", entry: list.open! })}>
+                      <PencilIcon data-icon="inline-start" />
+                      {t("workHours.typeExit")}
+                    </Button>
+                  ) : (
+                    <Button variant="outline" onClick={() => setOpen({ kind: "entry" })}>
+                      <PlusIcon data-icon="inline-start" />
+                      {t("workHours.add")}
+                    </Button>
+                  )}
+                  <Button onClick={clock} disabled={busy} variant={list.open ? "destructive" : "default"}>
+                    {busy ? (
+                      <LoaderCircleIcon className="animate-spin" />
+                    ) : list.open ? (
+                      <LogOutIcon data-icon="inline-start" />
+                    ) : (
+                      <LogInIcon data-icon="inline-start" />
+                    )}
+                    {list.open ? t("workHours.endNow") : t("workHours.startNow")}
+                  </Button>
+                </>
               )}
-              <Button onClick={clock} disabled={busy} variant={list.open ? "destructive" : "default"}>
-                {busy ? (
-                  <LoaderCircleIcon className="animate-spin" />
-                ) : list.open ? (
-                  <LogOutIcon data-icon="inline-start" />
-                ) : (
-                  <LogInIcon data-icon="inline-start" />
-                )}
-                {list.open ? t("workHours.endNow") : t("workHours.startNow")}
-              </Button>
             </div>
-            {list.open && <p className="text-xs text-muted-foreground">{t("workHours.exitFirstHint")}</p>}
+            {canChange && list.open && <p className="text-xs text-muted-foreground">{t("workHours.exitFirstHint")}</p>}
+            {!canChange && <p className="text-xs text-muted-foreground">{t("workHours.viewOnly")}</p>}
           </div>
         )}
 
@@ -260,15 +301,17 @@ export function WorkHoursPage() {
                       <span className="font-semibold">{duration(day.totalMillis)}</span>
                     </span>
                   )}
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    aria-label={day.notes ? t("workHours.dayNote.edit") : t("workHours.dayNote.add")}
-                    title={day.notes ? t("workHours.dayNote.edit") : t("workHours.dayNote.add")}
-                    onClick={() => setOpen({ kind: "note", day: day.day })}
-                  >
-                    <NotebookPenIcon />
-                  </Button>
+                  {canChange && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label={day.notes ? t("workHours.dayNote.edit") : t("workHours.dayNote.add")}
+                      title={day.notes ? t("workHours.dayNote.edit") : t("workHours.dayNote.add")}
+                      onClick={() => setOpen({ kind: "note", day: day.day })}
+                    >
+                      <NotebookPenIcon />
+                    </Button>
+                  )}
                 </div>
                 {day.entries.length > 0 && (
                   <ul className="flex flex-col divide-y">
@@ -290,22 +333,26 @@ export function WorkHoursPage() {
                         ) : (
                           <Badge variant="secondary">{t("workHours.ongoing")}</Badge>
                         )}
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          aria-label={t("workHours.edit")}
-                          onClick={() => setOpen({ kind: "entry", entry })}
-                        >
-                          <PencilIcon />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          aria-label={t("workHours.delete")}
-                          onClick={() => setOpen({ kind: "delete", entry })}
-                        >
-                          <Trash2Icon />
-                        </Button>
+                        {canChange && (
+                          <>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              aria-label={t("workHours.edit")}
+                              onClick={() => setOpen({ kind: "entry", entry })}
+                            >
+                              <PencilIcon />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              aria-label={t("workHours.delete")}
+                              onClick={() => setOpen({ kind: "delete", entry })}
+                            >
+                              <Trash2Icon />
+                            </Button>
+                          </>
+                        )}
                       </li>
                     ))}
                   </ul>
@@ -361,8 +408,8 @@ export function WorkHoursPage() {
         onOpenChange={(next) => !next && setOpen(null)}
         onCreated={(member) => {
           loadUsers();
-          // A manager goes straight to the new user's hours.
-          if (isManager) setUserId(member.id);
+          // Straight to the new user's hours.
+          setUserId(member.id);
         }}
       />
     </Card>

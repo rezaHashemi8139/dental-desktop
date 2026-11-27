@@ -2,8 +2,8 @@
 //! per day.
 //!
 //! Kept in the local database only (localdb::LOCAL_ONLY_TABLES): never sent to
-//! the server. Everyone records their own hours; a manager can also record and
-//! see anyone's.
+//! the server. Everyone can see everyone's hours, but changes only their own; a
+//! manager can change anyone's.
 //!
 //! A user may come and go any number of times a day, but in order: an entry is
 //! recorded first, then only its exit. Until the exit is in, no new entry can be
@@ -123,13 +123,9 @@ fn open_entry(db: &Connection, user: &[u8; 16]) -> Result<Option<WorkHoursRecord
         .map_err(internal)
 }
 
-/// Checks that the logged-in user may see and change `user`'s hours: their own,
-/// or anyone's for a manager. `user` must be one of this computer's users.
-fn check_access(db: &Connection, session: &SessionInfo, user: &str) -> Result<[u8; 16], Message> {
+/// `user` (hex), if they are one of this computer's users: anyone may see their hours.
+fn known_user(db: &Connection, user: &str) -> Result<[u8; 16], Message> {
     let user = parse_id(user, "workHours.errors.unknownUser")?;
-    if hex::encode(user) != session.user_id && session.role != ROLE_MANAGER {
-        return Err(err("workHours.errors.notAllowed"));
-    }
     let known: bool = db
         .query_row("SELECT EXISTS (SELECT 1 FROM users WHERE id = ?1)", [user], |row| row.get(0))
         .map_err(internal)?;
@@ -139,16 +135,25 @@ fn check_access(db: &Connection, session: &SessionInfo, user: &str) -> Result<[u
     Ok(user)
 }
 
+/// Checks that the logged-in user may change `user`'s hours and notes: their own,
+/// or anyone's for a manager.
+fn check_change(db: &Connection, session: &SessionInfo, user: &str) -> Result<[u8; 16], Message> {
+    let user = known_user(db, user)?;
+    if hex::encode(user) != session.user_id && session.role != ROLE_MANAGER {
+        return Err(err("workHours.errors.notAllowed"));
+    }
+    Ok(user)
+}
+
 /// `user`'s entries that started in [from, to) (unix milliseconds), their open
 /// one, and their notes of the days in [from_day, to_day) ("YYYY-MM-DD").
 pub fn list(
     db: &Connection,
-    session: &SessionInfo,
     user: &str,
     (from, to): (i64, i64),
     (from_day, to_day): (&str, &str),
 ) -> Result<WorkHoursList, Message> {
-    let user = check_access(db, session, user)?;
+    let user = known_user(db, user)?;
     let (from_day, to_day) = (check_day(from_day)?, check_day(to_day)?);
     let entries: Vec<WorkHoursRecord> = db
         .prepare(&format!(
@@ -167,6 +172,49 @@ pub fn list(
     Ok(WorkHoursList { entries, total_millis, open: open_entry(db, &user)?, day_notes })
 }
 
+/// One user's hours in a period, for the overview of everyone.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserTotal {
+    /// Local user id (hex).
+    pub user_id: String,
+    /// The time worked in the finished entries that started in the period, in milliseconds.
+    pub total_millis: i64,
+    /// Local days with an entry in the period.
+    pub days: i64,
+    /// Whether they are at work now (an entry without an exit).
+    pub at_work: bool,
+}
+
+/// Every user's hours in [from, to) (unix milliseconds), everyone included even
+/// with none.
+pub fn summary(db: &Connection, (from, to): (i64, i64)) -> Result<Vec<UserTotal>, Message> {
+    db.prepare(
+        // Days are counted in this computer's time zone, like the frontend's.
+        "SELECT u.id,
+                coalesce(sum(w.ended_at - w.started_at), 0),
+                count(DISTINCT date(w.started_at / 1000, 'unixepoch', 'localtime')),
+                EXISTS (SELECT 1 FROM work_hours o WHERE o.user_id = u.id AND o.ended_at IS NULL)
+         FROM users u
+         LEFT JOIN work_hours w ON w.user_id = u.id AND w.started_at >= ?1 AND w.started_at < ?2
+         GROUP BY u.id
+         ORDER BY u.full_name, u.username",
+    )
+    .and_then(|mut statement| {
+        statement
+            .query_map(params![from, to], |row| {
+                Ok(UserTotal {
+                    user_id: hex::encode(row.get::<_, Vec<u8>>(0)?),
+                    total_millis: row.get(1)?,
+                    days: row.get(2)?,
+                    at_work: row.get(3)?,
+                })
+            })?
+            .collect()
+    })
+    .map_err(internal)
+}
+
 /// Adds an entry (no `id`) or changes one. `now` (unix milliseconds) is the
 /// latest a time may be: hours are recorded once worked.
 pub fn save(
@@ -176,7 +224,7 @@ pub fn save(
     input: &WorkHoursInput,
     now: i64,
 ) -> Result<WorkHoursRecord, Message> {
-    let user = check_access(db, session, &input.user_id)?;
+    let user = check_change(db, session, &input.user_id)?;
     let (start, end) = (input.started_at, input.ended_at);
     if start <= 0 {
         return Err(err("workHours.errors.invalidStart"));
@@ -249,7 +297,7 @@ pub fn save(
 pub fn delete(db: &Connection, session: &SessionInfo, id: &str) -> Result<(), Message> {
     let target = parse_id(id, "workHours.errors.notFound")?;
     let existing = get(db, &target)?.ok_or_else(|| err("workHours.errors.notFound"))?;
-    check_access(db, session, &existing.user_id)?;
+    check_change(db, session, &existing.user_id)?;
     db.execute("DELETE FROM work_hours WHERE id = ?1", [target]).map_err(internal)?;
     Ok(())
 }
@@ -263,7 +311,7 @@ pub fn save_day_note(
     notes: &str,
     now: i64,
 ) -> Result<DayNote, Message> {
-    let user = check_access(db, session, user)?;
+    let user = check_change(db, session, user)?;
     let day = check_day(day)?;
     let notes = notes.trim();
     if notes.chars().count() > MAX_NOTES_CHARS {
@@ -330,19 +378,38 @@ mod tests {
         save(&db, &nurse, None, &entry(2, NOW - 100 * HOUR, Some(NOW - 99 * HOUR)), NOW).unwrap();
         let open = save(&db, &nurse, None, &entry(2, NOW - HOUR, None), NOW).unwrap();
 
-        let found = list(&db, &nurse, &nurse.user_id, period, DAYS).unwrap();
+        let found = list(&db, &nurse.user_id, period, DAYS).unwrap();
         assert_eq!(found.entries.len(), 3);
         assert_eq!(found.total_millis, 12 * HOUR, "the open entry is not counted");
         assert_eq!(found.open, Some(open.clone()));
 
         // The exit.
         save(&db, &nurse, Some(&open.id), &entry(2, NOW - HOUR, Some(NOW)), NOW).unwrap();
-        let found = list(&db, &nurse, &nurse.user_id, period, DAYS).unwrap();
+        let found = list(&db, &nurse.user_id, period, DAYS).unwrap();
         assert_eq!(found.total_millis, 13 * HOUR);
         assert_eq!(found.open, None);
 
         delete(&db, &nurse, &first.id).unwrap();
-        assert_eq!(list(&db, &nurse, &nurse.user_id, period, DAYS).unwrap().total_millis, 5 * HOUR);
+        assert_eq!(list(&db, &nurse.user_id, period, DAYS).unwrap().total_millis, 5 * HOUR);
+    }
+
+    #[test]
+    fn summary_of_everyone() {
+        let db = database("summary");
+        let (doctor, nurse) = (session(1, localdb::ROLE_MANAGER), session(2, ROLE_STAFF));
+        save(&db, &nurse, None, &entry(2, NOW - 30 * HOUR, Some(NOW - 26 * HOUR)), NOW).unwrap();
+        save(&db, &nurse, None, &entry(2, NOW - 25 * HOUR, Some(NOW - 24 * HOUR)), NOW).unwrap();
+        // Outside the period: not counted.
+        save(&db, &nurse, None, &entry(2, NOW - 100 * HOUR, Some(NOW - 99 * HOUR)), NOW).unwrap();
+        save(&db, &nurse, None, &entry(2, NOW - HOUR, None), NOW).unwrap();
+
+        let totals = summary(&db, (NOW - 50 * HOUR, NOW + HOUR)).unwrap();
+        let doctor_total = totals.iter().find(|t| t.user_id == doctor.user_id).unwrap();
+        assert_eq!((doctor_total.total_millis, doctor_total.days, doctor_total.at_work), (0, 0, false), "listed with none");
+        let nurse_total = totals.iter().find(|t| t.user_id == nurse.user_id).unwrap();
+        assert_eq!(nurse_total.total_millis, 5 * HOUR, "the open entry is not counted");
+        assert!(nurse_total.at_work);
+        assert!((1..=3).contains(&nurse_total.days), "days depend on the time zone");
     }
 
     #[test]
@@ -388,7 +455,7 @@ mod tests {
         save_day_note(&db, &nurse, &nurse.user_id, "2026-01-05", "changed", NOW).unwrap();
         save_day_note(&db, &nurse, &nurse.user_id, "2026-01-09", "other", NOW).unwrap();
         save_day_note(&db, &nurse, &nurse.user_id, "2026-02-01", "next month", NOW).unwrap();
-        let notes = |db: &Connection| list(db, &nurse, &nurse.user_id, (0, NOW), DAYS).unwrap().day_notes;
+        let notes = |db: &Connection| list(db, &nurse.user_id, (0, NOW), DAYS).unwrap().day_notes;
         assert_eq!(
             notes(&db),
             [
@@ -406,27 +473,35 @@ mod tests {
     }
 
     #[test]
-    fn staff_see_only_their_own_hours() {
+    fn everyone_sees_all_but_changes_only_their_own() {
         let db = database("access");
         let (doctor, nurse) = (session(1, localdb::ROLE_MANAGER), session(2, ROLE_STAFF));
         let theirs = save(&db, &doctor, None, &entry(1, NOW - 2 * HOUR, Some(NOW - HOUR)), NOW).unwrap();
-        let key = |r: Result<WorkHoursList, Message>| r.unwrap_err().key;
-        assert_eq!(key(list(&db, &nurse, &doctor.user_id, (0, NOW), DAYS)), "workHours.errors.notAllowed");
-        assert_eq!(save(&db, &nurse, None, &entry(1, NOW - 4 * HOUR, None), NOW).unwrap_err().key, "workHours.errors.notAllowed");
+        save_day_note(&db, &doctor, &doctor.user_id, "2026-01-05", "busy day", NOW).unwrap();
+
+        // Anyone sees another user's hours and notes, and everyone's totals.
+        let found = list(&db, &doctor.user_id, (0, NOW), DAYS).unwrap();
+        assert_eq!((found.total_millis, found.day_notes.len()), (HOUR, 1));
+        assert_eq!(summary(&db, (0, NOW)).unwrap().len(), 2);
+
+        // Staff change only their own.
+        let refused = |r: Result<WorkHoursRecord, Message>| r.unwrap_err().key;
+        assert_eq!(refused(save(&db, &nurse, None, &entry(1, NOW - 4 * HOUR, None), NOW)), "workHours.errors.notAllowed");
+        let edited = entry(1, NOW - 3 * HOUR, Some(NOW - HOUR));
+        assert_eq!(refused(save(&db, &nurse, Some(&theirs.id), &edited, NOW)), "workHours.errors.notAllowed");
         assert_eq!(delete(&db, &nurse, &theirs.id).unwrap_err().key, "workHours.errors.notAllowed");
         assert_eq!(
             save_day_note(&db, &nurse, &doctor.user_id, "2026-01-05", "x", NOW).unwrap_err().key,
             "workHours.errors.notAllowed"
         );
         // Moving an entry to someone else is refused.
-        assert_eq!(
-            save(&db, &doctor, Some(&theirs.id), &entry(2, NOW - 2 * HOUR, Some(NOW - HOUR)), NOW).unwrap_err().key,
-            "workHours.errors.notFound"
-        );
+        let moved = entry(2, NOW - 2 * HOUR, Some(NOW - HOUR));
+        assert_eq!(refused(save(&db, &doctor, Some(&theirs.id), &moved, NOW)), "workHours.errors.notFound");
 
-        // A manager can record and see anyone's hours, but only for users of this computer.
+        // A manager changes anyone's hours, but only for users of this computer.
         save(&db, &doctor, None, &entry(2, NOW - 2 * HOUR, Some(NOW - HOUR)), NOW).unwrap();
-        assert_eq!(list(&db, &doctor, &nurse.user_id, (0, NOW), DAYS).unwrap().total_millis, HOUR);
-        assert_eq!(key(list(&db, &doctor, &hex::encode([3u8; 16]), (0, NOW), DAYS)), "workHours.errors.unknownUser");
+        assert_eq!(list(&db, &nurse.user_id, (0, NOW), DAYS).unwrap().total_millis, HOUR);
+        let unknown = hex::encode([3u8; 16]);
+        assert_eq!(list(&db, &unknown, (0, NOW), DAYS).unwrap_err().key, "workHours.errors.unknownUser");
     }
 }

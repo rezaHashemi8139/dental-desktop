@@ -210,7 +210,7 @@ fn list_work_hours(
     to_day: String,
 ) -> Result<work_hours::WorkHoursList, Message> {
     with_session(&state, |session| {
-        work_hours::list(&session.db, &session.info, &user_id, (from, to), (&from_day, &to_day))
+        work_hours::list(&session.db, &user_id, (from, to), (&from_day, &to_day))
     })
 }
 
@@ -225,6 +225,12 @@ fn save_work_day_note(
     with_session(&state, |session| {
         work_hours::save_day_note(&session.db, &session.info, &user_id, &day, &notes, clock::now_millis())
     })
+}
+
+/// Every user's working hours in [from, to) (unix milliseconds).
+#[tauri::command]
+fn work_hours_summary(state: State<'_, AuthState>, from: i64, to: i64) -> Result<Vec<work_hours::UserTotal>, Message> {
+    with_session(&state, |session| work_hours::summary(&session.db, (from, to)))
 }
 
 /// Adds (no `id`) or changes an entry of working hours.
@@ -1078,6 +1084,7 @@ pub fn run() {
             save_work_hours,
             delete_work_hours,
             save_work_day_note,
+            work_hours_summary,
             create_member,
             languages::get_language_catalog,
             languages::list_installed_languages,

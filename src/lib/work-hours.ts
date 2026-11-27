@@ -4,7 +4,7 @@ import { localIsoDate, toGregorian, fromGregorian, type Calendar } from "@/i18n/
 /**
  * Working hours (src-tauri/src/work_hours.rs): when a user came in and left, and
  * notes per day. Kept on this computer only: never sent to the server. Everyone
- * records their own hours; a manager can also record and see anyone's.
+ * can see everyone's hours, but changes only their own; a manager can change anyone's.
  *
  * A user may come and go any number of times a day, but in order: until the last
  * entry has its exit ("open"), no new entry can be added.
@@ -66,6 +66,23 @@ export function saveWorkHours(entry: WorkHoursInput, id?: string): Promise<WorkH
 
 export function deleteWorkHours(id: string): Promise<void> {
   return invoke("delete_work_hours", { id });
+}
+
+/** One user's hours in a month, for the overview of everyone. */
+export interface UserTotal {
+  /** A LocalUser id. */
+  userId: string;
+  /** Time worked in the finished entries, in milliseconds. */
+  totalMillis: number;
+  /** Days with an entry. */
+  days: number;
+  /** At work now (an entry without an exit). */
+  atWork: boolean;
+}
+
+/** Every user's hours in `month`, everyone included even with none. */
+export function workHoursSummary(month: CalendarMonth): Promise<UserTotal[]> {
+  return invoke<UserTotal[]>("work_hours_summary", { from: month.start, to: month.end });
 }
 
 /** Sets `userId`'s notes for `day` ("YYYY-MM-DD"); empty notes remove them. */

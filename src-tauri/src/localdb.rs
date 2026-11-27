@@ -248,8 +248,7 @@ const MIGRATIONS: &[Migration] = &[
     );"),
     // 3: people are identified by one code (person.rs); identity_type and nationality go.
     Migration::Code(identity_code),
-    // 4: when the clinic's users came and left, and their notes per day (work_hours.rs).
-    // Local only: never sent to the server.
+    // 4: when the clinic's users came and left (work_hours.rs). Local only: never sent to the server.
     Migration::Sql("CREATE TABLE work_hours (
         id         BLOB PRIMARY KEY,      -- random, 16 bytes
         user_id    BLOB NOT NULL,         -- server user id (users.id) of who worked
@@ -258,17 +257,31 @@ const MIGRATIONS: &[Migration] = &[
         created_at INTEGER NOT NULL,      -- unix milliseconds
         updated_at INTEGER NOT NULL       -- unix milliseconds
     );
-    CREATE INDEX work_hours_user ON work_hours (user_id, started_at);
-    CREATE TABLE work_day_notes (
-        user_id    BLOB NOT NULL,         -- server user id (users.id)
-        day        TEXT NOT NULL,         -- local day, Gregorian YYYY-MM-DD
-        notes      TEXT NOT NULL,
-        updated_at INTEGER NOT NULL,      -- unix milliseconds
-        PRIMARY KEY (user_id, day)        -- the same anywhere: safe to merge (merge_contents)
-    );"),
+    CREATE INDEX work_hours_user ON work_hours (user_id, started_at);"),
     // 5: a patient's optional email, synced like their phone ('' for none).
     Migration::Sql("ALTER TABLE patients ADD COLUMN email TEXT NOT NULL DEFAULT '';"),
+    // 6: notes per day of working hours (work_hours.rs). Local only.
+    Migration::Code(work_day_notes),
 ];
+
+/// Migration 6: the users' notes per day of working hours. An early build's
+/// migration 4 gave each entry its own notes instead; that column goes, and the
+/// table may already be here from another early build.
+fn work_day_notes(db: &Connection) -> rusqlite::Result<()> {
+    db.execute_batch(
+        "CREATE TABLE IF NOT EXISTS work_day_notes (
+            user_id    BLOB NOT NULL,         -- server user id (users.id)
+            day        TEXT NOT NULL,         -- local day, Gregorian YYYY-MM-DD
+            notes      TEXT NOT NULL,
+            updated_at INTEGER NOT NULL,      -- unix milliseconds
+            PRIMARY KEY (user_id, day)        -- the same anywhere: safe to merge (merge_contents)
+        );",
+    )?;
+    if column_names(db, "main", "work_hours")?.iter().any(|c| c == "notes") {
+        db.execute_batch("ALTER TABLE work_hours DROP COLUMN notes;")?;
+    }
+    Ok(())
+}
 
 /// Migration 3. Patient ids are now derived from the code alone (patients::patient_id),
 /// so every patient gets its new id, and their treatments follow, the same as the
@@ -582,6 +595,43 @@ mod tests {
         assert_eq!(treatment_patients, [national.clone(), national]);
         let columns = column_names(&conn, "main", "patients").unwrap();
         assert!(!columns.iter().any(|c| c == "identity_type" || c == "nationality"));
+    }
+
+    /// Migration 6 repairs a database that ran an early build's migration 4
+    /// (notes per entry, no notes per day), and is harmless on a fresh one.
+    #[test]
+    fn work_day_notes_migration_repairs_early_builds() {
+        let dir = std::env::temp_dir().join(format!("dental-localdb-day-notes-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let conn = Connection::open(dir.join(DATABASE_FILE)).unwrap();
+        apply_key(&conn, &[12u8; 32]).unwrap();
+        for migration in &MIGRATIONS[..3] {
+            match migration {
+                Migration::Sql(sql) => conn.execute_batch(sql).unwrap(),
+                Migration::Code(run) => run(&conn).unwrap(),
+            }
+        }
+        // The early migration 4.
+        conn.execute_batch(
+            "CREATE TABLE work_hours (id BLOB PRIMARY KEY, user_id BLOB NOT NULL, started_at INTEGER NOT NULL,
+                ended_at INTEGER, notes TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+             CREATE INDEX work_hours_user ON work_hours (user_id, started_at);
+             INSERT INTO work_hours (id, user_id, started_at, ended_at, created_at, updated_at)
+                VALUES (x'01', x'02', 10, 20, 1, 1);",
+        )
+        .unwrap();
+        conn.pragma_update(None, "user_version", 4).unwrap();
+
+        migrate(&conn).unwrap();
+        assert_eq!(schema_version(&conn, "main").unwrap(), latest_schema_version());
+        assert!(table_names(&conn, "main").unwrap().contains(&"work_day_notes".to_string()));
+        assert!(!column_names(&conn, "main", "work_hours").unwrap().contains(&"notes".to_string()));
+        let kept: i64 = conn.query_row("SELECT count(*) FROM work_hours", [], |row| row.get(0)).unwrap();
+        assert_eq!(kept, 1, "entries are kept");
+
+        // Running it again (e.g. a table already made by another early build) changes nothing.
+        work_day_notes(&conn).unwrap();
     }
 
     #[test]
