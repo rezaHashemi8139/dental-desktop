@@ -83,7 +83,7 @@ function useLiveMode(): ConnectionMode {
 /**
  * /login and /register: what's offered depends on whether the server is reachable,
  * and on a computer that was never set up, the clinic setup comes first. The
- * decoration behind the cards shows through them (AUTH_CARD).
+ * decoration behind the cards shows through them, as through every card.
  */
 export function AuthLayout() {
   return (
@@ -97,8 +97,8 @@ export function AuthLayout() {
   );
 }
 
-/** The login and lock screens' cards: see-through and blurred, so the backdrop shows behind the form. */
-export const AUTH_CARD = "bg-card/55 backdrop-blur-md shadow-lg";
+/** The login and lock screens' cards: lifted off the backdrop (every card is see-through, src/components/ui/card.tsx). */
+export const AUTH_CARD = "shadow-lg";
 
 function AuthScreen() {
   const { t } = useTranslation();
