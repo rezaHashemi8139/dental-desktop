@@ -74,8 +74,7 @@ export function useHomeCalendar() {
         [...birthdays].map(([iso, names]) => [
           iso,
           // One line per person.
-          { icon: <PartyHatIcon />, label: names.map((name) => t("calendarEvents.birthday", { name })).join("
-") },
+          { icon: <PartyHatIcon />, label: names.map((name) => t("calendarEvents.birthday", { name })).join("\n") },
         ]),
       ),
     [birthdays, t],
