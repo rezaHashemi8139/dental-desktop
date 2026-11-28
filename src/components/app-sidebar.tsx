@@ -1,5 +1,13 @@
 import { Link, type LinkProps } from "@tanstack/react-router";
-import { ClockIcon, CreditCardIcon, DatabaseIcon, HouseIcon, UsersIcon, type LucideIcon } from "lucide-react";
+import {
+  ClockIcon,
+  CreditCardIcon,
+  DatabaseIcon,
+  FileChartColumnIcon,
+  HouseIcon,
+  UsersIcon,
+  type LucideIcon,
+} from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useSession } from "@/auth/store";
 import { UserMenu } from "@/components/user-menu";
@@ -7,7 +15,8 @@ import { Button } from "@/components/ui/button";
 
 /**
  * Side navigation of the logged-in pages (src/router.tsx). Link marks the
- * current page with data-status="active". The clinic owner also has the
+ * current page with data-status="active" (a link also stays active on the pages
+ * below it, unless `exact`). The clinic owner also has the
  * subscription page; a restricted login has nothing else. The logged-in user
  * and their menu are at the bottom.
  */
@@ -20,7 +29,10 @@ export function AppSidebar() {
       <nav aria-label={t("nav.label")} className="flex flex-col gap-1">
         {!restricted && <SidebarLink to="/home" icon={HouseIcon} label={t("nav.home")} />}
         {!restricted && <SidebarLink to="/patients" icon={UsersIcon} label={t("nav.patients")} />}
-        {!restricted && <SidebarLink to="/work-hours" icon={ClockIcon} label={t("nav.workHours")} />}
+        {!restricted && <SidebarLink to="/work-hours" exact icon={ClockIcon} label={t("nav.workHours")} />}
+        {!restricted && (
+          <SidebarLink to="/work-hours/report" icon={FileChartColumnIcon} label={t("nav.workHoursReport")} />
+        )}
         {!restricted && <SidebarLink to="/database" icon={DatabaseIcon} label={t("nav.database")} />}
         {session?.isOwner && <SidebarLink to="/subscription" icon={CreditCardIcon} label={t("nav.subscription")} />}
       </nav>
@@ -33,14 +45,25 @@ export function AppSidebar() {
   );
 }
 
-function SidebarLink({ to, icon: Icon, label }: { to: LinkProps["to"]; icon: LucideIcon; label: string }) {
+function SidebarLink({
+  to,
+  exact,
+  icon: Icon,
+  label,
+}: {
+  to: LinkProps["to"];
+  /** Active on this page only, not on the pages below it. */
+  exact?: boolean;
+  icon: LucideIcon;
+  label: string;
+}) {
   return (
     <Button
       asChild
       variant="ghost"
       className="w-full justify-start data-[status=active]:bg-accent data-[status=active]:text-accent-foreground"
     >
-      <Link to={to}>
+      <Link to={to} activeOptions={{ exact }}>
         <Icon data-icon="inline-start" />
         {label}
       </Link>

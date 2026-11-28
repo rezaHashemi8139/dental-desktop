@@ -122,8 +122,51 @@ export interface CalendarMonth {
 
 /** The Gregorian day after `iso` ("YYYY-MM-DD"). */
 export function nextDay(iso: string): string {
+  return addDays(iso, 1);
+}
+
+/** The Gregorian day `days` after `iso` ("YYYY-MM-DD"); negative goes back. */
+export function addDays(iso: string, days: number): string {
   const [year, month, day] = iso.split("-").map(Number);
-  return localIsoDate(new Date(year, month - 1, day + 1));
+  return localIsoDate(new Date(year, month - 1, day + days));
+}
+
+/** One day of one user's hours: its entries, finished time and notes. */
+export interface WorkDay {
+  /** A LocalUser id. */
+  userId: string;
+  /** Gregorian "YYYY-MM-DD". */
+  day: string;
+  /** Entries that started on the day, oldest first. */
+  entries: WorkHours[];
+  /** Time worked in the finished entries, in milliseconds. */
+  totalMillis: number;
+  /** The day's notes, "" for none. */
+  notes: string;
+}
+
+/**
+ * `userId`'s days in `list` that have entries or notes, plus each day of `include`
+ * even when empty; newest first.
+ */
+export function groupByDay(userId: string, list: WorkHoursList, include: string[] = []): WorkDay[] {
+  const days = new Map<string, WorkDay>();
+  const dayOf = (day: string) => {
+    let found = days.get(day);
+    if (!found) {
+      found = { userId, day, entries: [], totalMillis: 0, notes: "" };
+      days.set(day, found);
+    }
+    return found;
+  };
+  for (const day of include) dayOf(day);
+  for (const entry of list.entries) {
+    const day = dayOf(localIsoDate(entry.startedAt));
+    day.entries.push(entry);
+    if (entry.endedAt) day.totalMillis += entry.endedAt - entry.startedAt;
+  }
+  for (const note of list.dayNotes) dayOf(note.day).notes = note.notes;
+  return [...days.values()].sort((a, b) => b.day.localeCompare(a.day));
 }
 
 /** The local midnights after `from` and before `to` (unix milliseconds), oldest first. */
