@@ -639,7 +639,8 @@ async fn login_online(
     // Open (or create) the database and move it to the next key.
     let db = open_and_rotate(&ctx.database_path(), login.current.as_deref(), &login.next)?;
     let role = login.record(&db)?;
-    finish_online_login(ctx, installation, &login, password).await?;
+    let birth_dates = finish_online_login(ctx, installation, &login, password).await?;
+    save_birth_dates(&db, &birth_dates);
 
     // The server's spelling of the username is used from here on.
     Ok(Session {
@@ -653,14 +654,27 @@ async fn login_online(
     })
 }
 
+/// Members' birth dates from the server's member list: (server user id, Gregorian
+/// "YYYY-MM-DD" or ""), for `save_birth_dates`. Empty when the list was not read.
+pub type BirthDates = Vec<(Vec<u8>, String)>;
+
+/// Copies the members' birth dates to the local users (birthdays on the home calendar).
+pub fn save_birth_dates(db: &Connection, birth_dates: &BirthDates) {
+    if let Err(e) = localdb::set_birth_dates(db, birth_dates) {
+        // Copied again at the next login.
+        eprintln!("Birth dates not saved locally: {e}");
+    }
+}
+
 /// After the database moved to the next key: keeps offline login working for this
-/// user and every other user of the vault, tells the server, and syncs who may log in.
+/// user and every other user of the vault, tells the server, and syncs who may log
+/// in. Returns the members' birth dates, for the caller to save in the database.
 async fn finish_online_login(
     ctx: &Context,
     installation: &Installation,
     login: &OnlineLogin,
     password: &str,
-) -> Result<(), Message> {
+) -> Result<BirthDates, Message> {
     let database_key = DatabaseKey { version: login.new_version(), key: login.next.clone() };
     let mut vault = Vault::load(&ctx.data_dir, &installation.id).map_err(internal)?;
     vault.set_database_key(&database_key).map_err(internal)?;
@@ -676,24 +690,26 @@ async fn finish_online_login(
         // finds the database already on `next` and confirms then.
         eprintln!("Key rotation not confirmed yet: {e}");
     }
-    sync_members(ctx, installation, &login.token).await;
-    Ok(())
+    Ok(sync_members(ctx, installation, &login.token).await)
 }
 
 /// Drops the offline access of users who are no longer members of this
 /// installation, so a user removed on the server cannot keep logging in offline.
-async fn sync_members(ctx: &Context, installation: &Installation, token: &str) {
+/// Returns the members' birth dates.
+async fn sync_members(ctx: &Context, installation: &Installation, token: &str) -> BirthDates {
     let members = match ctx.api.list_members(token).await {
         Ok(response) => response.members,
         Err(e) => {
             eprintln!("Member list not synced: {e}");
-            return;
+            return BirthDates::new();
         }
     };
-    let ids: Vec<String> = members.iter().filter_map(|m| m.user.as_ref()).map(|u| hex::encode(&u.id)).collect();
+    let birth_dates: BirthDates =
+        members.iter().filter_map(|m| Some((m.user.as_ref()?.id.clone(), m.birth_date.clone()))).collect();
+    let ids: Vec<String> = birth_dates.iter().map(|(id, _)| hex::encode(id)).collect();
     // The caller is a member, so an empty list is a broken answer: never empty the vault for it.
     if ids.is_empty() {
-        return;
+        return birth_dates;
     }
     let result = Vault::load(&ctx.data_dir, &installation.id).and_then(|mut vault| {
         let removed = vault.retain_members(&ids);
@@ -706,6 +722,7 @@ async fn sync_members(ctx: &Context, installation: &Installation, token: &str) {
     if let Err(e) = result {
         eprintln!("Member list not synced: {e}");
     }
+    birth_dates
 }
 
 /// Opens the database with the current key and rekeys it to `next`, or creates it.
@@ -878,13 +895,14 @@ pub fn switch_online(ctx: &Context, session: &mut Session, login: &OnlineLogin) 
     Ok(())
 }
 
-/// The local half of reconnecting, after `switch_online`: vault, key confirmation, members.
+/// The local half of reconnecting, after `switch_online`: vault, key confirmation,
+/// members. Returns the members' birth dates, for `save_birth_dates`.
 pub async fn finish_reconnect(
     ctx: &Context,
     installation: &Installation,
     login: &OnlineLogin,
     request: &ReconnectRequest,
-) -> Result<(), Message> {
+) -> Result<BirthDates, Message> {
     finish_online_login(ctx, installation, login, &request.password).await
 }
 

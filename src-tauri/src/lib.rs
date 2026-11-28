@@ -2,6 +2,7 @@ mod api;
 mod auth;
 mod backup;
 mod billing;
+mod calendar_events;
 mod clock;
 mod connectivity;
 mod device;
@@ -333,6 +334,36 @@ async fn create_member(
     Ok(created)
 }
 
+/// Sets a staff member's birth date on their account (members.rs), then on this
+/// computer's copy at once (birthdays on the home calendar). Clinic admins, online.
+/// Returns the birth date as stored ("" when removed).
+#[tauri::command]
+async fn set_member_birth_date(
+    app: AppHandle,
+    state: State<'_, AuthState>,
+    user_id: String,
+    birth_date: String,
+) -> Result<String, Message> {
+    let token = Zeroizing::new(with_session(&state, |session| {
+        if !session.info.is_admin {
+            return Err(Message::new("members.birthDate.errors.notAdmin"));
+        }
+        session.token().map(str::to_owned).ok_or_else(|| Message::new("members.birthDate.errors.needsServer"))
+    })?);
+    let stored = members::set_birth_date(&state.ctx, &token, &user_id, &birth_date)
+        .await
+        .inspect_err(|e| check_update_required(&app, &state, e))?;
+    // Already on the server: if the session closed meanwhile, the next login copies it anyway.
+    let saved = with_session(&state, |session| {
+        let id = hex::decode(&user_id).map_err(|e| Message::error("errors.unknown", e))?;
+        localdb::set_birth_dates(&session.db, &[(id, stored.clone())]).map_err(|e| Message::error("errors.unknown", e))
+    });
+    if let Err(e) = saved {
+        eprintln!("Birth date set, but not saved on this computer: {} {:?}", e.key, e.params);
+    }
+    Ok(stored)
+}
+
 #[tauri::command]
 fn delete_treatment(app: AppHandle, state: State<'_, AuthState>, id: String) -> Result<(), Message> {
     with_session(&state, |session| patients::delete_treatment(&session.db, &id, clock::now_millis()))?;
@@ -389,6 +420,13 @@ async fn check_connectivity(state: State<'_, AuthState>) -> Result<ConnectivityS
 #[tauri::command]
 async fn network_time() -> Option<network_time::NetworkTime> {
     network_time::fetch().await
+}
+
+/// The occasions and public holidays of month `month` of Solar Hijri year `year`,
+/// which has `days` days (the home page's calendar); None without internet.
+#[tauri::command]
+async fn calendar_events(year: u16, month: u8, days: u8) -> Option<Vec<calendar_events::CalendarDay>> {
+    calendar_events::fetch(year, month, days).await
 }
 
 /// Which login screen to show. Checks the server first when `refresh` is set
@@ -726,8 +764,9 @@ async fn get_profile(app: AppHandle, state: State<'_, AuthState>) -> Result<prof
     profile::get(&state.ctx, &token).await.inspect_err(|e| check_update_required(&app, &state, e))
 }
 
-/// Changes the user's full name, phone and email on the server, then shows the new name
-/// in the open login (and the local list of users) at once. Returns the session.
+/// Changes the user's full name, phone, email and birth date on the server, then shows
+/// the new name in the open login (and both in the local list of users) at once.
+/// Returns the session.
 #[tauri::command]
 async fn update_profile(
     app: AppHandle,
@@ -747,9 +786,11 @@ async fn update_profile(
     let mut guard = state.session.lock().unwrap();
     let session = guard.as_mut().filter(|s| same_user(&s.info)).ok_or_else(|| Message::new("errors.notLoggedIn"))?;
     session.info.full_name = updated.full_name;
-    if let Err(e) = profile::record_full_name(&session.db, &session.info.user_id, &session.info.full_name) {
+    let saved =
+        profile::record_profile(&session.db, &session.info.user_id, &session.info.full_name, &updated.birth_date);
+    if let Err(e) = saved {
         // Written again at the next login anyway.
-        eprintln!("Could not save the new name locally: {e}");
+        eprintln!("Could not save the new name and birth date locally: {e}");
     }
     Ok(session.info.clone())
 }
@@ -1044,8 +1085,15 @@ async fn reconnect(app: AppHandle) {
             auth::discard_login(&state.ctx, login).await;
         }
         Some(Ok(info)) => {
-            if let Err(message) = auth::finish_reconnect(&state.ctx, &installation, &login, &request).await {
-                eprintln!("Reconnected, but offline access not updated: {} {:?}", message.key, message.params);
+            match auth::finish_reconnect(&state.ctx, &installation, &login, &request).await {
+                Ok(birth_dates) => {
+                    if let Some(session) = state.session.lock().unwrap().as_ref() {
+                        auth::save_birth_dates(&session.db, &birth_dates);
+                    }
+                }
+                Err(message) => {
+                    eprintln!("Reconnected, but offline access not updated: {} {:?}", message.key, message.params);
+                }
             }
             eprintln!("Offline session of {} is online again", info.username);
             let _ = app.emit(SESSION_EVENT, info);
@@ -1106,6 +1154,7 @@ pub fn run() {
             connectivity_status,
             check_connectivity,
             network_time,
+            calendar_events,
             connection_status,
             list_my_clinics,
             list_cities,
@@ -1154,6 +1203,7 @@ pub fn run() {
             save_payment,
             delete_payment,
             create_member,
+            set_member_birth_date,
             languages::get_language_catalog,
             languages::list_installed_languages,
             languages::install_language,

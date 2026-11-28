@@ -188,6 +188,15 @@ impl Api {
         self.call("MemberService", "AddMember", request, Some(token)).await
     }
 
+    /// Sets a member's birth date (on their account). Clinic admins only.
+    pub async fn set_member_birth_date(
+        &self,
+        token: &str,
+        request: &proto::SetMemberBirthDateRequest,
+    ) -> Result<proto::SetMemberBirthDateResponse, ApiError> {
+        self.call("MemberService", "SetMemberBirthDate", request, Some(token)).await
+    }
+
     /// Short timeout: it also runs while the app closes, which must not hang when the server is down.
     pub async fn logout(&self, token: &str) -> Result<proto::LogoutResponse, ApiError> {
         self.call_with_timeout("AuthService", "Logout", &proto::LogoutRequest {}, Some(token), LOGOUT_TIMEOUT)

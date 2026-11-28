@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useForm } from "react-hook-form";
+import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { CircleCheckIcon, KeyRoundIcon, LoaderCircleIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -7,12 +7,14 @@ import {
   changeOwnPasswordSchema,
   profileSchema,
   type ChangeOwnPasswordValues,
+  type ProfileFormValues,
   type ProfileValues,
 } from "@/auth/schemas";
 import { changeOwnPassword, getProfile, updateProfile, type Profile } from "@/auth/session";
 import { setSession } from "@/auth/store";
 import { toRustMessage, translateMessage, type RustMessage } from "@/i18n/message";
 import { fieldError } from "@/lib/form";
+import { DateField } from "@/components/date-field";
 import { FormField } from "@/components/form-field";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -27,8 +29,8 @@ import {
 } from "@/components/ui/dialog";
 
 /**
- * The logged-in user's own account, from the server: the full name and mobile
- * number can be changed; the username and identification code are shown but
+ * The logged-in user's own account, from the server: the full name, mobile
+ * number, email and birth date (birthdays on the home calendar) can be changed; the username and identification code are shown but
  * fixed. The password can be changed too, in a second view of the dialog.
  * Everything here needs the server. Opened from the user menu (src/components/user-menu.tsx).
  */
@@ -114,18 +116,19 @@ function ProfileForm({ profile, passwordChanged, onChangePassword, onSaved }: Pr
   const [error, setError] = useState<RustMessage | null>(null);
   const {
     register,
+    control,
     handleSubmit,
     formState: { errors, isSubmitting },
-  } = useForm<ProfileValues>({
+  } = useForm<ProfileFormValues, unknown, ProfileValues>({
     resolver: zodResolver(profileSchema),
-    defaultValues: { fullName: profile.fullName, phone: profile.phone, email: profile.email },
+    defaultValues: { fullName: profile.fullName, phone: profile.phone, email: profile.email, birthDate: profile.birthDate },
   });
 
   // `values` are already checked and trimmed by the schema.
   async function submit(values: ProfileValues) {
     setError(null);
     try {
-      setSession(await updateProfile(values));
+      setSession(await updateProfile({ ...values, birthDate: values.birthDate ?? "" }));
       onSaved();
     } catch (e) {
       setError(toRustMessage(e));
@@ -184,6 +187,20 @@ function ProfileForm({ profile, passwordChanged, onChangePassword, onSaved }: Pr
         maxLength={254}
         latin
         {...register("email")}
+      />
+      <Controller
+        control={control}
+        name="birthDate"
+        render={({ field, fieldState }) => (
+          <DateField
+            id="profile-birth-date"
+            label={t("account.profile.birthDate")}
+            error={fieldError(fieldState.error)}
+            value={field.value}
+            onChange={field.onChange}
+            clearable
+          />
+        )}
       />
       <Button type="button" variant="outline" className="self-start" onClick={onChangePassword}>
         <KeyRoundIcon />

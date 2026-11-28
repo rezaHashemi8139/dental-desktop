@@ -1,21 +1,33 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import { calendarParts, fromGregorian, localIsoDate, toGregorian, type Calendar } from "@/i18n/calendar";
 import { useLanguage } from "@/i18n/use-language";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+
+/** A small icon on a day of the calendar, with a tooltip. */
+export interface DayMark {
+  icon: ReactNode;
+  label: string;
+}
 
 /**
  * A month grid to pick a day from, in `calendar` (Solar Hijri, Gregorian or Lunar
  * Hijri) and the current language. Works with Gregorian "YYYY-MM-DD" days like
  * the rest of src/i18n/calendar.ts. The title switches to a grid of months.
+ * Days can be shown as holidays and carry a mark with a tooltip (the home page's
+ * occasions and birthdays).
  */
 export function CalendarPicker({
   value,
   calendar,
   onSelect,
   today = localIsoDate(Date.now()),
+  holidays,
+  marks,
+  onMonthChange,
 }: {
   /** The picked day (Gregorian "YYYY-MM-DD"), or "" / null for none. */
   value: string | null;
@@ -23,6 +35,12 @@ export function CalendarPicker({
   onSelect: (iso: string) => void;
   /** Today (Gregorian "YYYY-MM-DD"); the system clock's day by default. */
   today?: string;
+  /** Days (Gregorian "YYYY-MM-DD") shown as holidays, like the weekend. */
+  holidays?: ReadonlySet<string>;
+  /** A small icon in the corner of these days (Gregorian "YYYY-MM-DD"), with its label as a tooltip (may have several lines). */
+  marks?: ReadonlyMap<string, DayMark>;
+  /** Called with the month shown (numbered in `calendar`) and its days, at first and whenever it changes. */
+  onMonthChange?: (month: { year: number; month: number; days: string[] }) => void;
 }) {
   const { t } = useTranslation();
   const { language } = useLanguage();
@@ -53,6 +71,11 @@ export function CalendarPicker({
   const last = days.length ? new Date(days[days.length - 1]) : null;
   // Empty cells before the 1st, so it falls under its weekday.
   const lead = first ? (first.getUTCDay() - week.firstDay + 7) % 7 : 0;
+
+  useEffect(() => {
+    onMonthChange?.({ year: shown.year, month: shown.month, days });
+    // Only a new month is news: the callback may be a new function on every render.
+  }, [days]);
   const weekdays = Array.from({ length: 7 }, (_, i) => (week.firstDay + i) % 7);
 
   function move(months: number) {
@@ -148,24 +171,45 @@ export function CalendarPicker({
           const selected = iso === value;
           const isToday = iso === today;
           const weekend = week.weekend.includes(new Date(iso).getUTCDay());
+          const holiday = holidays?.has(iso) ?? false;
+          const mark = marks?.get(iso);
+          const label = [formats.full.format(new Date(iso)), holiday && t("calendarEvents.holiday"), mark?.label]
+            .filter(Boolean)
+            .join(" – ");
+          const button = (
+            <button
+              type="button"
+              aria-label={label}
+              aria-pressed={selected}
+              aria-current={isToday ? "date" : undefined}
+              onClick={() => onSelect(iso)}
+              className={cn(
+                "relative flex size-9 items-center justify-center rounded-md text-sm tabular-nums transition-colors",
+                "hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
+                (weekend || holiday) && "text-destructive/80",
+                holiday && "font-medium text-destructive",
+                isToday && !selected && "font-semibold text-primary ring-1 ring-primary/40",
+                selected && "bg-primary font-semibold text-primary-foreground shadow-sm hover:bg-primary/90 hover:text-primary-foreground",
+              )}
+            >
+              {formats.number.format(index + 1)}
+              {mark && (
+                <span aria-hidden className="pointer-events-none absolute -inset-e-0.5 -top-0.5 text-primary [&_svg]:size-3.5">
+                  {mark.icon}
+                </span>
+              )}
+            </button>
+          );
           return (
             <div key={iso} className="flex justify-center">
-              <button
-                type="button"
-                aria-label={formats.full.format(new Date(iso))}
-                aria-pressed={selected}
-                aria-current={isToday ? "date" : undefined}
-                onClick={() => onSelect(iso)}
-                className={cn(
-                  "relative flex size-9 items-center justify-center rounded-md text-sm tabular-nums transition-colors",
-                  "hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
-                  weekend && "text-destructive/80",
-                  isToday && !selected && "font-semibold text-primary ring-1 ring-primary/40",
-                  selected && "bg-primary font-semibold text-primary-foreground shadow-sm hover:bg-primary/90 hover:text-primary-foreground",
-                )}
-              >
-                {formats.number.format(index + 1)}
-              </button>
+              {mark ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>{button}</TooltipTrigger>
+                  <TooltipContent className="whitespace-pre-line">{mark.label}</TooltipContent>
+                </Tooltip>
+              ) : (
+                button
+              )}
             </div>
           );
         })}

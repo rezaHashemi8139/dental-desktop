@@ -277,6 +277,9 @@ const MIGRATIONS: &[Migration] = &[
         updated_at  INTEGER NOT NULL      -- unix milliseconds
     );
     CREATE INDEX patient_payments_patient ON patient_payments (patient_id, paid_at);"),
+    // 8: users' birth dates, for birthdays on the home calendar: a copy of their accounts'
+    // on the server, refreshed at every online login (auth.rs). Gregorian YYYY-MM-DD, or ''.
+    Migration::Sql("ALTER TABLE users ADD COLUMN birth_date TEXT NOT NULL DEFAULT '';"),
 ];
 
 /// Migration 6: the users' notes per day of working hours. An early build's
@@ -406,6 +409,8 @@ pub struct LocalUser {
     pub id: String,
     pub username: String,
     pub full_name: String,
+    /// Gregorian "YYYY-MM-DD", or empty if unknown.
+    pub birth_date: String,
 }
 
 /// Adds a user created from this computer (members.rs) before they ever log in
@@ -423,11 +428,27 @@ pub fn add_user(conn: &Connection, user_id: &[u8], username: &str, full_name: &s
 /// Everyone who has logged in here (or was added from here), by name: who can
 /// be picked as having performed a treatment, and whose names treatments show.
 pub fn list_users(conn: &Connection) -> rusqlite::Result<Vec<LocalUser>> {
-    let mut statement = conn.prepare("SELECT id, username, full_name FROM users ORDER BY full_name, username")?;
+    let mut statement =
+        conn.prepare("SELECT id, username, full_name, birth_date FROM users ORDER BY full_name, username")?;
     let rows = statement.query_map([], |row| {
-        Ok(LocalUser { id: hex::encode(row.get::<_, Vec<u8>>(0)?), username: row.get(1)?, full_name: row.get(2)? })
+        Ok(LocalUser {
+            id: hex::encode(row.get::<_, Vec<u8>>(0)?),
+            username: row.get(1)?,
+            full_name: row.get(2)?,
+            birth_date: row.get(3)?,
+        })
     })?;
     rows.collect()
+}
+
+/// Copies birth dates from the server (server user id, Gregorian "YYYY-MM-DD" or
+/// "") to the users already here; others are not added.
+pub fn set_birth_dates(conn: &Connection, birth_dates: &[(Vec<u8>, String)]) -> rusqlite::Result<()> {
+    let mut statement = conn.prepare("UPDATE users SET birth_date = ?2 WHERE id = ?1")?;
+    for (user_id, birth_date) in birth_dates {
+        statement.execute(params![user_id, birth_date])?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -458,7 +479,17 @@ mod tests {
         // The role stays as stored, even if a different default is passed later.
         assert_eq!(record_login(&conn, &[7; 16], "doctor", "Dr. A", ROLE_STAFF, 200).unwrap(), ROLE_MANAGER);
         let users = list_users(&conn).unwrap();
-        assert_eq!(users, [LocalUser { id: hex::encode([7; 16]), username: "doctor".into(), full_name: "Dr. A".into() }]);
+        let doctor = LocalUser {
+            id: hex::encode([7; 16]),
+            username: "doctor".into(),
+            full_name: "Dr. A".into(),
+            birth_date: String::new(),
+        };
+        assert_eq!(users, [doctor.clone()]);
+
+        // Birth dates are copied only to users already here.
+        set_birth_dates(&conn, &[(vec![7; 16], "1985-07-31".into()), (vec![8; 16], "1990-01-01".into())]).unwrap();
+        assert_eq!(list_users(&conn).unwrap(), [LocalUser { birth_date: "1985-07-31".into(), ..doctor }]);
     }
 
     /// Reconnecting an offline session (auth::switch_online) rekeys the connection it keeps open.

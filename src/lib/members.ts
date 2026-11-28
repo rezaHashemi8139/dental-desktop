@@ -33,3 +33,11 @@ export interface CreatedMember {
 export function createMember(member: MemberInput): Promise<CreatedMember> {
   return invoke<CreatedMember>("create_member", { member });
 }
+
+/**
+ * Sets a staff member's birth date on their account (Gregorian "YYYY-MM-DD", "" to
+ * remove it), for birthdays on the home calendar. Returns it as stored.
+ */
+export function setMemberBirthDate(userId: string, birthDate: string): Promise<string> {
+  return invoke<string>("set_member_birth_date", { userId, birthDate });
+}

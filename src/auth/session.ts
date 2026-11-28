@@ -122,6 +122,8 @@ export interface Profile {
   phone: string;
   /** Empty when none was given. */
   email: string;
+  /** Gregorian "YYYY-MM-DD"; empty when none was given. */
+  birthDate: string;
 }
 
 /** What the user can change about their account; the rest is fixed. */
@@ -130,6 +132,8 @@ export interface ProfileInput {
   phone: string;
   /** Optional: empty removes the email on file. */
   email: string;
+  /** Optional, Gregorian "YYYY-MM-DD": empty removes the birth date on file. */
+  birthDate: string;
 }
 
 /** Needs the server. */

@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::api::ApiError;
 use crate::auth::{server_error, Context};
 use crate::message::Message;
-use crate::{person, proto};
+use crate::{patients, person, proto};
 
 /// The server's reason when the account can already use this clinic.
 const ALREADY_MEMBER: &str = "already_member";
@@ -72,4 +72,16 @@ pub async fn create(ctx: &Context, token: &str, input: &MemberInput) -> Result<C
         Err(e) => return Err(api_error(e)),
     }
     Ok(CreatedMember { id: hex::encode(&user.id), username: user.username, full_name: user.full_name, created: response.created })
+}
+
+/// Sets a member's birth date on their account (`user_id`: 32 hex digits), for
+/// birthdays on the home calendar. Returns the birth date as stored: Gregorian
+/// "YYYY-MM-DD", or empty when it was removed.
+pub async fn set_birth_date(ctx: &Context, token: &str, user_id: &str, birth_date: &str) -> Result<String, Message> {
+    let user_id = hex::decode(user_id).map_err(|e| Message::error("errors.unknown", e))?;
+    let request = proto::SetMemberBirthDateRequest { user_id, birth_date: patients::check_date(birth_date)? };
+    let response = ctx.api.set_member_birth_date(token, &request).await.map_err(api_error)?;
+    let member =
+        response.member.ok_or_else(|| Message::error("errors.unknown", "birth date response without member"))?;
+    Ok(member.birth_date)
 }

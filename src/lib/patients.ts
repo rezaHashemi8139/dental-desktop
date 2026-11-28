@@ -139,6 +139,8 @@ export interface LocalUser {
   id: string;
   username: string;
   fullName: string;
+  /** Gregorian "YYYY-MM-DD", or "" if unknown: a copy of their account's, for birthdays on the home calendar. */
+  birthDate: string;
 }
 
 /** Everyone who has logged in on this computer: who can be picked as having performed a treatment. */

@@ -116,7 +116,7 @@ fn is_email(email: &str) -> bool {
 }
 
 /// A Gregorian "YYYY-MM-DD" that exists, or empty.
-fn check_date(date: &str) -> Result<String, Message> {
+pub fn check_date(date: &str) -> Result<String, Message> {
     let date = latin_digits(date.trim());
     if date.is_empty() {
         return Ok(date);

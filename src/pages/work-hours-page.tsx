@@ -27,7 +27,9 @@ import {
   type WorkHoursList,
 } from "@/lib/work-hours";
 import { DayNoteDialog } from "@/components/day-note-dialog";
+import { MemberBirthDateDialog } from "@/components/member-birth-date-dialog";
 import { MemberDialog } from "@/components/member-dialog";
+import { PartyHatIcon } from "@/components/party-hat-icon";
 import { WorkHoursDialog } from "@/components/work-hours-dialog";
 import {
   DayBadge,
@@ -44,7 +46,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 /** What is open over the page. */
-type Open = { kind: "day"; day: string } | { kind: "note"; day: string } | { kind: "member" };
+type Open = { kind: "day"; day: string } | { kind: "note"; day: string } | { kind: "member" } | { kind: "birthDate" };
 
 /** How often the running time of an open entry is redrawn. */
 const TICK_MS = 30_000;
@@ -161,7 +163,16 @@ export function WorkHoursPage() {
 
         {/* Who, where they are now, and the one action that matters most. */}
         <section className="flex flex-col gap-4 rounded-xl bg-muted/50 p-4">
-          <UserSelect users={users} value={userId} onChange={setUserId} />
+          <div className="flex flex-wrap items-center gap-2">
+            <UserSelect users={users} value={userId} onChange={setUserId} />
+            {/* Their birthday shows on the home calendar. */}
+            {session.isAdmin && users.some((user) => user.id === userId) && (
+              <Button variant="outline" onClick={() => setOpen({ kind: "birthDate" })}>
+                <PartyHatIcon data-icon="inline-start" />
+                {t("members.birthDate.open")}
+              </Button>
+            )}
+          </div>
 
           {list && (
             <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
@@ -250,6 +261,15 @@ export function WorkHoursPage() {
         dayLabel={noteDay ? longDay(noteDay) : ""}
         notes={list?.dayNotes.find((note) => note.day === noteDay)?.notes ?? ""}
         onSaved={reload}
+      />
+      <MemberBirthDateDialog
+        open={open?.kind === "birthDate"}
+        onOpenChange={(next) => !next && setOpen(null)}
+        user={users.find((user) => user.id === userId) ?? null}
+        onSaved={() => {
+          setOpen(null);
+          reloadUsers();
+        }}
       />
       <MemberDialog
         open={open?.kind === "member"}

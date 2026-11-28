@@ -46,6 +46,10 @@ const optionalEmail = (error: ParseKeys) =>
     .trim()
     .refine((v) => v === "" || (v.length <= 254 && z.email().safeParse(v).success), error);
 const email = optionalEmail(message("setup.validation.emailFormat"));
+
+/** A date field's value: "" when empty, null while incomplete or not a real day (src/components/date-field.tsx). */
+const optionalDate = z.string().nullable().refine((v) => v !== null, message("patients.errors.invalidBirthDate"));
+
 // Typed in any case, with spaces or dashes; sent the way the server takes it.
 const identityCode = z
   .string()
@@ -80,8 +84,16 @@ export const profileSchema = z.object({
   fullName: requiredText,
   phone,
   email,
+  birthDate: optionalDate,
 });
+/** As the form holds them (the birth date may be null while being typed). */
+export type ProfileFormValues = z.input<typeof profileSchema>;
 export type ProfileValues = z.infer<typeof profileSchema>;
+
+/** A staff member's birth date, set by an admin (src/components/member-birth-date-dialog.tsx). */
+export const memberBirthDateSchema = z.object({ birthDate: optionalDate });
+export type MemberBirthDateFormValues = z.input<typeof memberBirthDateSchema>;
+export type MemberBirthDateValues = z.infer<typeof memberBirthDateSchema>;
 
 /** The user's own password (src/components/profile-dialog.tsx): the current one, then the new one twice. */
 export const changeOwnPasswordSchema = z
@@ -136,8 +148,6 @@ export type ClinicValues = z.infer<typeof clinicWithIdentitySchema>;
 
 // Rust checks lengths again (src-tauri/src/patients.rs); the inputs' maxLength keeps them in range.
 
-/** A date field's value: "" when empty, null while incomplete or not a real day (src/components/date-field.tsx). */
-const optionalDate = z.string().nullable().refine((v) => v !== null, message("patients.errors.invalidBirthDate"));
 
 export const patientSchema = z.object({
   identityCode,
