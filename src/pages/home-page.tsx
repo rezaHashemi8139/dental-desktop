@@ -8,6 +8,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { ClockCard, SystemClockWarning } from "@/components/home-clock";
 
 const homeRoute = getRouteApi("/app/home");
 
@@ -28,54 +29,60 @@ export function HomePage() {
   const role = (t as unknown as (key: string, options: object) => string)(roleKey, { defaultValue: session.role });
 
   return (
-    <Card className="w-full max-w-md">
-      <CardHeader>
-        <CardTitle>{t("home.welcome", { name: session.fullName || session.username })}</CardTitle>
-        <CardDescription dir="ltr" className="rtl:text-end">
-          {session.username}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-3 text-sm">
-        {trialPlan && trialEndsAt && (
-          <Alert variant="info">
-            <GiftIcon />
-            <AlertTitle>{t("home.trial.title")}</AlertTitle>
-            <AlertDescription>
-              {t("home.trial.description", { plan: trialPlan, date: formatDate(trialEndsAt * 1000) })}
-            </AlertDescription>
-          </Alert>
-        )}
-        <div className="flex items-center gap-2">
-          <span className="text-muted-foreground">{t("home.role")}:</span>
-          <Badge variant="secondary">{role}</Badge>
-          {session.isAdmin && (
-            <Badge variant="outline">
-              <ShieldCheckIcon />
-              {t("home.admin")}
-            </Badge>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          {session.online ? (
-            <Badge>
-              <CloudIcon />
-              {t("home.online")}
-            </Badge>
-          ) : (
-            <Badge variant="destructive">
-              <CloudOffIcon />
-              {t("home.offline")}
-            </Badge>
-          )}
-          <span className="text-muted-foreground">{t("home.offlineUntil", { date: offlineUntil })}</span>
-        </div>
-      </CardContent>
-      <CardFooter>
-        <Button variant="outline" onClick={logOut} disabled={busy}>
-          {busy ? <LoaderCircleIcon className="animate-spin" /> : <LogOutIcon data-icon="inline-start" />}
-          {t("home.logout")}
-        </Button>
-      </CardFooter>
-    </Card>
+    <div className="flex w-full max-w-4xl flex-col gap-4">
+      <SystemClockWarning />
+      <div className="grid items-start gap-4 lg:grid-cols-2">
+        <Card className="w-full">
+          <CardHeader>
+            <CardTitle>{t("home.welcome", { name: session.fullName || session.username })}</CardTitle>
+            <CardDescription dir="ltr" className="rtl:text-end">
+              {session.username}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3 text-sm">
+            {trialPlan && trialEndsAt && (
+              <Alert variant="info">
+                <GiftIcon />
+                <AlertTitle>{t("home.trial.title")}</AlertTitle>
+                <AlertDescription>
+                  {t("home.trial.description", { plan: trialPlan, date: formatDate(trialEndsAt * 1000) })}
+                </AlertDescription>
+              </Alert>
+            )}
+            <div className="flex items-center gap-2">
+              <span className="text-muted-foreground">{t("home.role")}:</span>
+              <Badge variant="secondary">{role}</Badge>
+              {session.isAdmin && (
+                <Badge variant="outline">
+                  <ShieldCheckIcon />
+                  {t("home.admin")}
+                </Badge>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {session.online ? (
+                <Badge>
+                  <CloudIcon />
+                  {t("home.online")}
+                </Badge>
+              ) : (
+                <Badge variant="destructive">
+                  <CloudOffIcon />
+                  {t("home.offline")}
+                </Badge>
+              )}
+              <span className="text-muted-foreground">{t("home.offlineUntil", { date: offlineUntil })}</span>
+            </div>
+          </CardContent>
+          <CardFooter>
+            <Button variant="outline" onClick={logOut} disabled={busy}>
+              {busy ? <LoaderCircleIcon className="animate-spin" /> : <LogOutIcon data-icon="inline-start" />}
+              {t("home.logout")}
+            </Button>
+          </CardFooter>
+        </Card>
+        <ClockCard />
+      </div>
+    </div>
   );
 }

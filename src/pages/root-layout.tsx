@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Outlet } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { ConnectivityIndicator } from "@/components/connectivity-indicator";
+import { HeaderClock } from "@/components/header-clock";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { SyncIndicator } from "@/components/sync-indicator";
 import { ThemeSwitcher } from "@/components/theme-switcher";
@@ -26,6 +27,7 @@ export function RootLayout() {
           <span className="text-xs text-muted-foreground">{t("settings.about.version", { version })}</span>
         </div>
         <div className="flex items-center gap-2">
+          <HeaderClock />
           <UpdateButton />
           <SyncIndicator />
           <ConnectivityIndicator />

@@ -15,15 +15,17 @@ export function CalendarPicker({
   value,
   calendar,
   onSelect,
+  today = localIsoDate(Date.now()),
 }: {
   /** The picked day (Gregorian "YYYY-MM-DD"), or "" / null for none. */
   value: string | null;
   calendar: Calendar;
   onSelect: (iso: string) => void;
+  /** Today (Gregorian "YYYY-MM-DD"); the system clock's day by default. */
+  today?: string;
 }) {
   const { t } = useTranslation();
   const { language } = useLanguage();
-  const today = localIsoDate(Date.now());
   const [shown, setShown] = useState(() => {
     const parts = fromGregorian(value || today, calendar) ?? fromGregorian(today, calendar)!;
     return { year: parts.year, month: parts.month };

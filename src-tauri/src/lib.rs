@@ -10,6 +10,7 @@ mod localdb;
 mod lockdown;
 mod members;
 mod message;
+mod network_time;
 mod patients;
 mod payments;
 mod person;
@@ -381,6 +382,13 @@ fn connectivity_status(state: State<'_, AuthState>) -> ConnectivityStatus {
 #[tauri::command]
 async fn check_connectivity(state: State<'_, AuthState>) -> Result<ConnectivityStatus, Message> {
     Ok(state.watcher.refresh().await)
+}
+
+/// The exact time from the internet (the header clock, and the home page's warning
+/// about a wrong system clock); None without internet.
+#[tauri::command]
+async fn network_time() -> Option<network_time::NetworkTime> {
+    network_time::fetch().await
 }
 
 /// Which login screen to show. Checks the server first when `refresh` is set
@@ -1097,6 +1105,7 @@ pub fn run() {
             current_session,
             connectivity_status,
             check_connectivity,
+            network_time,
             connection_status,
             list_my_clinics,
             list_cities,

@@ -11,6 +11,7 @@ import { initTheme } from "./theme/theme";
 import { lockDown } from "./lib/lockdown";
 import { initSync } from "./lib/sync";
 import { initUpdates } from "./lib/update";
+import { initNetworkClock } from "./lib/network-clock";
 import "./index.css";
 
 // Before anything is drawn, so the page never flashes in the wrong colors.
@@ -31,7 +32,9 @@ requestAnimationFrame(() =>
 // before the first render: the router's guards decide the first page from them.
 // Connectivity, updates and syncing are followed from the start, so no change is
 // missed and a forced update shows at once.
+// The clocks start on the system time and switch to the network time when it answers.
 Promise.all([initI18n(), loadSession(), initConnectivity(), initUpdates(), initSync()]).then(() => {
+  initNetworkClock();
   ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     <React.StrictMode>
       <DirectionProvider>
