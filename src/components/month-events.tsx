@@ -1,18 +1,22 @@
 import { useMemo } from "react";
-import { LoaderCircleIcon } from "lucide-react";
+import { BellIcon, LoaderCircleIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import type { Calendar } from "@/i18n/calendar";
 import { useLanguage } from "@/i18n/use-language";
 import { CALENDAR_EVENTS_SOURCE, type CalendarEvent, type MonthEvents } from "@/lib/calendar-events";
+import type { Reminder } from "@/lib/reminders";
 import { PartyHatIcon } from "@/components/party-hat-icon";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 
-type Row = { iso: string; birthday: string; event?: never } | { iso: string; event: CalendarEvent; birthday?: never };
+type Row =
+  | { iso: string; birthday: string; event?: never; reminder?: never }
+  | { iso: string; reminder: Reminder; event?: never; birthday?: never }
+  | { iso: string; event: CalendarEvent; birthday?: never; reminder?: never };
 
 /**
- * The occasions and birthdays of the month shown on the home page's calendar,
+ * The occasions, birthdays and the user's reminders of the month shown on the home page's calendar,
  * day by day, in a card of their own under it. Occasions (`events`) exist for the Solar Hijri calendar only;
  * pass null for other calendars.
  */
@@ -23,6 +27,7 @@ export function MonthEvents({
   year,
   events,
   birthdays,
+  reminders,
   selected,
   onRetry,
 }: {
@@ -36,6 +41,8 @@ export function MonthEvents({
   events: MonthEvents | null;
   /** Names of the people whose birthday it is, per day (Gregorian "YYYY-MM-DD"). */
   birthdays: ReadonlyMap<string, string[]>;
+  /** The user's reminders, per day (Gregorian "YYYY-MM-DD"). */
+  reminders: ReadonlyMap<string, Reminder[]>;
   /** The day picked on the calendar: its rows stand out. */
   selected: string | null;
   onRetry: () => void;
@@ -56,11 +63,12 @@ export function MonthEvents({
     const result: Row[] = [];
     days.forEach((iso, index) => {
       for (const name of birthdays.get(iso) ?? []) result.push({ iso, birthday: name });
+      for (const reminder of reminders.get(iso) ?? []) result.push({ iso, reminder });
       if (events?.status !== "ready") return;
       for (const event of events.days.find((day) => day.day === index + 1)?.events ?? []) result.push({ iso, event });
     });
     return result;
-  }, [days, birthdays, events]);
+  }, [days, birthdays, reminders, events]);
 
   return (
     <Card className="w-full">
@@ -107,6 +115,11 @@ export function MonthEvents({
                   <span className="flex items-center gap-1.5">
                     <PartyHatIcon className="size-3.5 shrink-0 self-center text-primary" />
                     {t("calendarEvents.birthday", { name: row.birthday })}
+                  </span>
+                ) : row.reminder ? (
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <BellIcon className="size-3.5 shrink-0 self-center text-primary" />
+                    <span className="min-w-0 wrap-break-word">{row.reminder.text}</span>
                   </span>
                 ) : (
                   // Occasions are in Persian, as the source publishes them.

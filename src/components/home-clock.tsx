@@ -1,24 +1,23 @@
-import { useEffect, useMemo, useState } from "react";
-import { ClockAlertIcon, GlobeIcon } from "lucide-react";
+import { useMemo, useState } from "react";
+import { BellIcon, BellPlusIcon, ClockAlertIcon, GlobeIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { localIsoDate, useCalendar, useFormatDate, type Calendar } from "@/i18n/calendar";
 import { useLanguage } from "@/i18n/use-language";
-import { useSession } from "@/auth/store";
-import { monthBirthdays } from "@/lib/birthdays";
+import { monthBirthdays, useBirthdayPeople } from "@/lib/birthdays";
 import { useSolarMonthEvents, type SolarMonth } from "@/lib/calendar-events";
-import { refreshBirthDates } from "@/lib/members";
 import { isSystemClockWrong, useClock } from "@/lib/network-clock";
-import { listLocalUsers, type LocalUser } from "@/lib/patients";
-import { CalendarPicker } from "@/components/calendar-picker";
+import { nextIsoDay, useReminders } from "@/lib/reminders";
+import { CalendarPicker, type DayMark } from "@/components/calendar-picker";
 import { MonthEvents } from "@/components/month-events";
 import { PartyHatIcon } from "@/components/party-hat-icon";
+import { ReminderDialog } from "@/components/reminder-dialog";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 /**
  * The home page's calendar state, shared by its two cards: the month shown and the
- * day picked (ClockCard), and that month's holidays, occasions (Solar Hijri only)
- * and the birthdays of the clinic's staff (HomeMonthEvents).
+ * day picked (ClockCard), and that month's holidays, occasions (Solar Hijri only),
+ * the birthdays of the clinic's staff and the user's reminders (HomeMonthEvents).
  */
 export function useHomeCalendar() {
   const { t } = useTranslation();
@@ -39,46 +38,33 @@ export function useHomeCalendar() {
     return new Set(events.days.filter((day) => day.holiday).map((day) => current.days[day.day - 1]));
   }, [current, events]);
 
-  // Birthdays of everyone who has logged in on this computer.
-  const [people, setPeople] = useState<LocalUser[]>([]);
-  // Read again when the session changes, e.g. after the user saved their birth date in the profile.
-  const session = useSession();
-  useEffect(() => {
-    let active = true;
-    const load = () =>
-      listLocalUsers().then(
-        (users) => active && setPeople(users),
-        (e) => console.warn("Could not list the users for birthdays:", e),
-      );
-    // This computer's copy at once, then again with the server's latest (online only).
-    void load();
-    refreshBirthDates().then(load, (e) => console.warn("Could not refresh the birth dates:", e));
-    return () => {
-      active = false;
-    };
-  }, [session]);
+  // Birthdays of everyone who has logged in on this computer, with the server's latest birth dates.
+  const people = useBirthdayPeople(true);
   const birthdays = useMemo(
-    () =>
-      current
-        ? monthBirthdays(
-            people.map((user) => ({ name: user.fullName || user.username, birthDate: user.birthDate })),
-            current.days,
-            calendar,
-          )
-        : new Map<string, string[]>(),
+    () => (current ? monthBirthdays(people, current.days, calendar) : new Map<string, string[]>()),
     [people, current, calendar],
   );
-  const marks = useMemo(
+  // The user's own reminders of the month.
+  const reminderRange = useMemo(
     () =>
-      new Map(
-        [...birthdays].map(([iso, names]) => [
-          iso,
-          // One line per person.
-          { icon: <PartyHatIcon />, label: names.map((name) => t("calendarEvents.birthday", { name })).join("\n") },
-        ]),
-      ),
-    [birthdays, t],
+      current?.days.length
+        ? { fromDay: current.days[0], toDay: nextIsoDay(current.days[current.days.length - 1]) }
+        : null,
+    [current],
   );
+  const reminders = useReminders(reminderRange);
+  const marks = useMemo(() => {
+    const result = new Map<string, DayMark[]>();
+    const add = (iso: string, mark: DayMark) => result.set(iso, [...(result.get(iso) ?? []), mark]);
+    // One line per person, and per reminder.
+    for (const [iso, names] of birthdays) {
+      add(iso, { icon: <PartyHatIcon />, label: names.map((name) => t("calendarEvents.birthday", { name })).join("\n") });
+    }
+    for (const [iso, list] of reminders) {
+      add(iso, { icon: <BellIcon />, label: list.map((reminder) => t("reminders.item", { text: reminder.text })).join("\n") });
+    }
+    return result;
+  }, [birthdays, reminders, t]);
 
   return {
     calendar,
@@ -92,6 +78,7 @@ export function useHomeCalendar() {
     retry,
     holidays,
     birthdays,
+    reminders,
     marks,
   };
 }
@@ -109,6 +96,15 @@ export function ClockCard({ home }: { home: HomeCalendar }) {
   const formatDate = useFormatDate();
   const clock = useClock();
   const { calendar, today, picked, setPicked } = home;
+  // The day whose reminders are open in the dialog.
+  const [reminderDay, setReminderDay] = useState<string | null>(null);
+  const reminderDayLabel = useMemo(
+    () =>
+      reminderDay
+        ? new Intl.DateTimeFormat(language.code, { calendar, dateStyle: "full", timeZone: "UTC" }).format(new Date(reminderDay))
+        : "",
+    [reminderDay, language.code, calendar],
+  );
 
   return (
     <Card className="w-full">
@@ -143,6 +139,7 @@ export function ClockCard({ home }: { home: HomeCalendar }) {
           calendar={calendar}
           holidays={home.holidays}
           marks={home.marks}
+          dayAction={{ icon: <BellPlusIcon />, label: t("reminders.add"), onClick: setReminderDay }}
           onMonthChange={(month) => home.setShown({ ...month, calendar })}
           onSelect={(day) =>
             setPicked((current) =>
@@ -151,15 +148,20 @@ export function ClockCard({ home }: { home: HomeCalendar }) {
           }
         />
       </CardContent>
+      <ReminderDialog
+        day={reminderDay}
+        dayLabel={reminderDayLabel}
+        onOpenChange={(open) => !open && setReminderDay(null)}
+      />
     </Card>
   );
 }
 
-/** The occasions and birthdays of the month on the home page's calendar, in a card of their own. */
+/** The occasions, birthdays and reminders of the month on the home page's calendar, in a card of their own. */
 export function HomeMonthEvents({ home }: { home: HomeCalendar }) {
   const { language } = useLanguage();
-  const { calendar, current, solar, birthdays } = home;
-  if (!current || (!solar && birthdays.size === 0)) return null;
+  const { calendar, current, solar, birthdays, reminders } = home;
+  if (!current || (!solar && birthdays.size === 0 && reminders.size === 0)) return null;
   return (
     <MonthEvents
       calendar={calendar}
@@ -167,6 +169,7 @@ export function HomeMonthEvents({ home }: { home: HomeCalendar }) {
       {...monthTitle(current.days[0], language.code, calendar)}
       events={solar ? home.events : null}
       birthdays={birthdays}
+      reminders={reminders}
       selected={home.picked.day ?? home.today}
       onRetry={home.retry}
     />

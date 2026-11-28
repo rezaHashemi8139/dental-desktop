@@ -288,6 +288,12 @@ export const dayNoteSchema = z.object({
 });
 export type DayNoteValues = z.infer<typeof dayNoteSchema>;
 
+/** A new reminder on a day of the home calendar. */
+export const reminderSchema = z.object({
+  text: requiredText,
+});
+export type ReminderValues = z.infer<typeof reminderSchema>;
+
 /** A new user of the clinic: the sign-up fields, with a temporary password instead of their own. */
 export const memberSchema = z.object({
   fullName: requiredText,

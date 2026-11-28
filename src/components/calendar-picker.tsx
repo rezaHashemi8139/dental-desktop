@@ -16,13 +16,20 @@ export interface DayMark {
   label: string;
 }
 
+/** A small button shown on a day while it is hovered or focused, e.g. to add a reminder to it. */
+export interface DayAction {
+  icon: ReactNode;
+  label: string;
+  onClick: (iso: string) => void;
+}
+
 /**
  * A month grid to pick a day from, in `calendar` (Solar Hijri, Gregorian or Lunar
  * Hijri) and the current language. Works with Gregorian "YYYY-MM-DD" days like
  * the rest of src/i18n/calendar.ts. The title switches to a grid of months, whose
  * year switches to a grid of years.
- * Days can be shown as holidays and carry a mark with a tooltip (the home page's
- * occasions and birthdays).
+ * Days can be shown as holidays and carry marks with a tooltip (the home page's
+ * birthdays and reminders), and offer an action while hovered (adding a reminder).
  */
 export function CalendarPicker({
   value,
@@ -31,6 +38,7 @@ export function CalendarPicker({
   today = localIsoDate(Date.now()),
   holidays,
   marks,
+  dayAction,
   onMonthChange,
 }: {
   /** The picked day (Gregorian "YYYY-MM-DD"), or "" / null for none. */
@@ -41,8 +49,10 @@ export function CalendarPicker({
   today?: string;
   /** Days (Gregorian "YYYY-MM-DD") shown as holidays, like the weekend. */
   holidays?: ReadonlySet<string>;
-  /** A small icon in the corner of these days (Gregorian "YYYY-MM-DD"), with its label as a tooltip (may have several lines). */
-  marks?: ReadonlyMap<string, DayMark>;
+  /** Small icons in the corner of these days (Gregorian "YYYY-MM-DD"), with their labels as a tooltip (may have several lines). */
+  marks?: ReadonlyMap<string, readonly DayMark[]>;
+  /** A small button on the other corner of the day under the pointer (or focused). */
+  dayAction?: DayAction;
   /** Called with the month shown (numbered in `calendar`) and its days, at first and whenever it changes. */
   onMonthChange?: (month: { year: number; month: number; days: string[] }) => void;
 }) {
@@ -212,8 +222,9 @@ export function CalendarPicker({
           const isToday = iso === today;
           const weekend = week.weekend.includes(new Date(iso).getUTCDay());
           const holiday = holidays?.has(iso) ?? false;
-          const mark = marks?.get(iso);
-          const label = [formats.full.format(new Date(iso)), holiday && t("calendarEvents.holiday"), mark?.label]
+          const dayMarks = marks?.get(iso) ?? [];
+          const markLabel = dayMarks.map((mark) => mark.label).join("\n");
+          const label = [formats.full.format(new Date(iso)), holiday && t("calendarEvents.holiday"), markLabel]
             .filter(Boolean)
             .join(" – ");
           const button = (
@@ -233,23 +244,49 @@ export function CalendarPicker({
               )}
             >
               {formats.number.format(index + 1)}
-              {mark && (
-                <span aria-hidden className="pointer-events-none absolute -inset-e-0.5 -top-0.5 text-primary [&_svg]:size-3.5">
-                  {mark.icon}
+              {dayMarks.length > 0 && (
+                <span
+                  aria-hidden
+                  className={cn(
+                    "pointer-events-none absolute -inset-e-0.5 -top-0.5 flex text-primary",
+                    dayMarks.length > 1 ? "[&_svg]:size-3" : "[&_svg]:size-3.5",
+                  )}
+                >
+                  {dayMarks.map((mark, i) => (
+                    <span key={i}>{mark.icon}</span>
+                  ))}
                 </span>
               )}
             </button>
           );
           return (
             <div key={iso} className="flex justify-center">
-              {mark ? (
-                <Tooltip>
-                  <TooltipTrigger asChild>{button}</TooltipTrigger>
-                  <TooltipContent className="whitespace-pre-line">{mark.label}</TooltipContent>
-                </Tooltip>
-              ) : (
-                button
-              )}
+              <div className="group relative">
+                {dayMarks.length > 0 ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>{button}</TooltipTrigger>
+                    <TooltipContent className="whitespace-pre-line">{markLabel}</TooltipContent>
+                  </Tooltip>
+                ) : (
+                  button
+                )}
+                {dayAction && (
+                  // Beside the day's button, not in it: a button cannot hold another.
+                  <button
+                    type="button"
+                    aria-label={dayAction.label}
+                    title={dayAction.label}
+                    onClick={() => dayAction.onClick(iso)}
+                    className={cn(
+                      "absolute -inset-s-1 -top-1 flex size-4 items-center justify-center rounded-full border bg-background text-muted-foreground shadow-xs transition-opacity [&_svg]:size-2.5",
+                      "hover:bg-primary hover:text-primary-foreground focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
+                      "pointer-events-none opacity-0 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100",
+                    )}
+                  >
+                    {dayAction.icon}
+                  </button>
+                )}
+              </div>
             </div>
           );
         })}

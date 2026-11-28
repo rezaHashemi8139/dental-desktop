@@ -33,6 +33,8 @@ export function HomePage() {
     <div className="flex w-full max-w-4xl flex-col gap-4">
       <SystemClockWarning />
       <div className="grid items-start gap-4 lg:grid-cols-2">
+        {/* The calendar first (the start side), the welcome card beside it. */}
+        <ClockCard home={home} />
         <Card className="w-full">
           <CardHeader>
             <CardTitle>{t("home.welcome", { name: session.fullName || session.username })}</CardTitle>
@@ -82,7 +84,6 @@ export function HomePage() {
             </Button>
           </CardFooter>
         </Card>
-        <ClockCard home={home} />
       </div>
       {/* The month's occasions and birthdays: across the whole page, under both cards. */}
       <HomeMonthEvents home={home} />

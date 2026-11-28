@@ -280,6 +280,16 @@ const MIGRATIONS: &[Migration] = &[
     // 8: users' birth dates, for birthdays on the home calendar: a copy of their accounts'
     // on the server, refreshed at every online login (auth.rs). Gregorian YYYY-MM-DD, or ''.
     Migration::Sql("ALTER TABLE users ADD COLUMN birth_date TEXT NOT NULL DEFAULT '';"),
+    // 9: users' reminders on days of the home calendar, any number a day (reminders.rs). Local only.
+    Migration::Sql("CREATE TABLE reminders (
+        id         BLOB PRIMARY KEY,      -- random, 16 bytes
+        user_id    BLOB NOT NULL,         -- server user id (users.id) of whose reminder it is
+        day        TEXT NOT NULL,         -- local day, Gregorian YYYY-MM-DD
+        text       TEXT NOT NULL,
+        created_at INTEGER NOT NULL,      -- unix milliseconds
+        updated_at INTEGER NOT NULL       -- unix milliseconds
+    );
+    CREATE INDEX reminders_user_day ON reminders (user_id, day);"),
 ];
 
 /// Migration 6: the users' notes per day of working hours. An early build's
@@ -348,14 +358,15 @@ pub const SYNC_REJECTED: &str = "rejected";
 pub const SYNCED_TABLES: &[&str] = &["patients", "treatments"];
 
 /// Tables that never leave this computer: who may log in here and their roles,
-/// sync bookkeeping, working hours, and **every financial table** (fees,
+/// sync bookkeeping, working hours, reminders, and **every financial table** (fees,
 /// payments, balances, debts...). Financial data must never reach the server, so
 /// a financial table always goes here, never in SYNCED_TABLES.
 ///
 /// Every table must be in exactly one of the two lists; a test checks it, so a
 /// new table cannot be added without deciding whether it is synced.
 #[allow(dead_code)] // Read by the test that checks every table is classified.
-pub const LOCAL_ONLY_TABLES: &[&str] = &["users", "sync_cursors", "work_hours", "work_day_notes", "patient_payments"];
+pub const LOCAL_ONLY_TABLES: &[&str] =
+    &["users", "sync_cursors", "work_hours", "work_day_notes", "patient_payments", "reminders"];
 
 /// The schema version this app writes: how many migrations it has.
 pub fn latest_schema_version() -> i64 {

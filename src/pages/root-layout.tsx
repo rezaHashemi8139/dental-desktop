@@ -6,6 +6,7 @@ import { HeaderClock } from "@/components/header-clock";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { SyncIndicator } from "@/components/sync-indicator";
 import { ThemeSwitcher } from "@/components/theme-switcher";
+import { TodayIndicators } from "@/components/today-indicators";
 import { UpdateButton } from "@/components/update-button";
 import { UpdateRequiredScreen } from "@/components/update-required-screen";
 import { useUpdate } from "@/lib/update";
@@ -27,6 +28,7 @@ export function RootLayout() {
           <span className="text-xs text-muted-foreground">{t("settings.about.version", { version })}</span>
         </div>
         <div className="flex items-center gap-2">
+          <TodayIndicators />
           <HeaderClock />
           <UpdateButton />
           <SyncIndicator />

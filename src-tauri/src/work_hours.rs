@@ -37,7 +37,7 @@ fn parse_id(hex_id: &str, not_found: &str) -> Result<[u8; 16], Message> {
 }
 
 /// A day as "YYYY-MM-DD" (Gregorian). Only the shape is checked: it is a key, not a date to compute with.
-fn check_day(day: &str) -> Result<String, Message> {
+pub(crate) fn check_day(day: &str) -> Result<String, Message> {
     let day = day.trim();
     let bytes = day.as_bytes();
     let shaped = bytes.len() == 10

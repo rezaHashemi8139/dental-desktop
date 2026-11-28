@@ -17,6 +17,7 @@ mod payments;
 mod person;
 mod profile;
 mod proto;
+mod reminders;
 mod secure;
 mod settings;
 mod setup;
@@ -300,6 +301,29 @@ fn clock_out(
 #[tauri::command]
 fn delete_work_hours(state: State<'_, AuthState>, id: String) -> Result<(), Message> {
     with_session(&state, |session| work_hours::delete(&session.db, &session.info, &id))
+}
+
+// --- Reminders on the home calendar (reminders.rs): local only, never synced -
+
+/// The logged-in user's reminders of the days in [from_day, to_day) ("YYYY-MM-DD").
+#[tauri::command]
+fn list_reminders(
+    state: State<'_, AuthState>,
+    from_day: String,
+    to_day: String,
+) -> Result<Vec<reminders::Reminder>, Message> {
+    with_session(&state, |session| reminders::list(&session.db, &session.info, &from_day, &to_day))
+}
+
+/// Adds a reminder for the logged-in user on `day` ("YYYY-MM-DD").
+#[tauri::command]
+fn add_reminder(state: State<'_, AuthState>, day: String, text: String) -> Result<reminders::Reminder, Message> {
+    with_session(&state, |session| reminders::add(&session.db, &session.info, &day, &text, clock::now_millis()))
+}
+
+#[tauri::command]
+fn delete_reminder(state: State<'_, AuthState>, id: String) -> Result<(), Message> {
+    with_session(&state, |session| reminders::delete(&session.db, &session.info, &id))
 }
 
 // --- Patient payments and refunds (payments.rs): financial, local only -----
@@ -1221,6 +1245,9 @@ pub fn run() {
             delete_work_hours,
             save_work_day_note,
             work_hours_summary,
+            list_reminders,
+            add_reminder,
+            delete_reminder,
             list_payments,
             save_payment,
             delete_payment,
