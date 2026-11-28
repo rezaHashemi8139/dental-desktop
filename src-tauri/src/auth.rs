@@ -693,6 +693,13 @@ async fn finish_online_login(
     Ok(sync_members(ctx, installation, &login.token).await)
 }
 
+/// The members' birth dates from the server, read again (the home calendar, so a
+/// birth date set elsewhere shows without logging in again). Any member may ask.
+pub async fn member_birth_dates(ctx: &Context, token: &str) -> Result<BirthDates, String> {
+    let members = ctx.api.list_members(token).await.map_err(|e| e.to_string())?.members;
+    Ok(members.iter().filter_map(|m| Some((m.user.as_ref()?.id.clone(), m.birth_date.clone()))).collect())
+}
+
 /// Drops the offline access of users who are no longer members of this
 /// installation, so a user removed on the server cannot keep logging in offline.
 /// Returns the members' birth dates.

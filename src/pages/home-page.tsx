@@ -8,7 +8,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { ClockCard, SystemClockWarning } from "@/components/home-clock";
+import { ClockCard, HomeMonthEvents, SystemClockWarning, useHomeCalendar } from "@/components/home-clock";
 
 const homeRoute = getRouteApi("/app/home");
 
@@ -20,6 +20,7 @@ export function HomePage() {
   const { trialPlan, trialEndsAt } = homeRoute.useSearch();
   const formatDate = useFormatDate();
   const { logOut, busy } = useLogout();
+  const home = useHomeCalendar();
   // The app layout leaves for /login when there is no session.
   if (!session) return null;
 
@@ -81,8 +82,10 @@ export function HomePage() {
             </Button>
           </CardFooter>
         </Card>
-        <ClockCard />
+        <ClockCard home={home} />
       </div>
+      {/* The month's occasions and birthdays: across the whole page, under both cards. */}
+      <HomeMonthEvents home={home} />
     </div>
   );
 }

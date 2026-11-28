@@ -199,6 +199,27 @@ fn list_local_users(state: State<'_, AuthState>) -> Result<Vec<localdb::LocalUse
     })
 }
 
+/// Copies the members' birth dates from the server to this computer's users (the
+/// home calendar's birthdays), so one set elsewhere shows without logging in again.
+/// Online sessions only; offline, or if the server does not answer, nothing changes.
+#[tauri::command]
+async fn refresh_birth_dates(state: State<'_, AuthState>) -> Result<(), Message> {
+    let Some(token) = with_session(&state, |session| Ok(session.token().map(str::to_owned)))? else {
+        return Ok(());
+    };
+    let token = Zeroizing::new(token);
+    match auth::member_birth_dates(&state.ctx, &token).await {
+        Ok(birth_dates) => with_session(&state, |session| {
+            auth::save_birth_dates(&session.db, &birth_dates);
+            Ok(())
+        }),
+        Err(e) => {
+            eprintln!("Birth dates not refreshed: {e}");
+            Ok(())
+        }
+    }
+}
+
 // --- Working hours (work_hours.rs): local only, never synced ---------------
 
 /// `user_id`'s working hours that started in [from, to) (unix milliseconds), and
@@ -1192,6 +1213,7 @@ pub fn run() {
             delete_treatment,
             patient_history,
             list_local_users,
+            refresh_birth_dates,
             list_work_hours,
             save_work_hours,
             replace_work_day,

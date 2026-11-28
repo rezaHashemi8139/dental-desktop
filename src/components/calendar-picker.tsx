@@ -7,6 +7,9 @@ import { useLanguage } from "@/i18n/use-language";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
+/** Years on one page of the "years" view. */
+const YEARS_PER_PAGE = 20;
+
 /** A small icon on a day of the calendar, with a tooltip. */
 export interface DayMark {
   icon: ReactNode;
@@ -16,7 +19,8 @@ export interface DayMark {
 /**
  * A month grid to pick a day from, in `calendar` (Solar Hijri, Gregorian or Lunar
  * Hijri) and the current language. Works with Gregorian "YYYY-MM-DD" days like
- * the rest of src/i18n/calendar.ts. The title switches to a grid of months.
+ * the rest of src/i18n/calendar.ts. The title switches to a grid of months, whose
+ * year switches to a grid of years.
  * Days can be shown as holidays and carry a mark with a tooltip (the home page's
  * occasions and birthdays).
  */
@@ -48,7 +52,9 @@ export function CalendarPicker({
     const parts = fromGregorian(value || today, calendar) ?? fromGregorian(today, calendar)!;
     return { year: parts.year, month: parts.month };
   });
-  const [view, setView] = useState<"days" | "months">("days");
+  const [view, setView] = useState<"days" | "months" | "years">("days");
+  // The first year of the page of years shown in the "years" view.
+  const [yearPage, setYearPage] = useState(0);
 
   const week = useMemo(() => weekInfo(language.code, calendar), [language.code, calendar]);
   const formats = useMemo(
@@ -59,8 +65,6 @@ export function CalendarPicker({
       full: new Intl.DateTimeFormat(language.code, { calendar, dateStyle: "full", timeZone: "UTC" }),
       weekday: new Intl.DateTimeFormat(language.code, { weekday: "narrow", timeZone: "UTC" }),
       weekdayLong: new Intl.DateTimeFormat(language.code, { weekday: "long", timeZone: "UTC" }),
-      gregorian: new Intl.DateTimeFormat(language.code, { calendar: "gregory", month: "long", year: "numeric", timeZone: "UTC" }),
-      gregorianMonth: new Intl.DateTimeFormat(language.code, { calendar: "gregory", month: "long", timeZone: "UTC" }),
       number: new Intl.NumberFormat(language.code, { useGrouping: false }),
     }),
     [language.code, calendar],
@@ -68,7 +72,6 @@ export function CalendarPicker({
 
   const days = useMemo(() => monthDays(shown.year, shown.month, calendar), [shown, calendar]);
   const first = days[0] ? new Date(days[0]) : null;
-  const last = days.length ? new Date(days[days.length - 1]) : null;
   // Empty cells before the 1st, so it falls under its weekday.
   const lead = first ? (first.getUTCDay() - week.firstDay + 7) % 7 : 0;
 
@@ -89,14 +92,59 @@ export function CalendarPicker({
     </Button>
   );
 
+  if (view === "years") {
+    const years = Array.from({ length: YEARS_PER_PAGE }, (_, i) => yearPage + i);
+    return (
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center gap-1">
+          {navButton(t("dateField.previousYears"), () => setYearPage(yearPage - YEARS_PER_PAGE), false)}
+          <div className="flex-1 text-center text-sm font-semibold tabular-nums">
+            {formats.number.format(years[0])} – {formats.number.format(years[years.length - 1])}
+          </div>
+          {navButton(t("dateField.nextYears"), () => setYearPage(yearPage + YEARS_PER_PAGE), true)}
+        </div>
+        <div className="grid grid-cols-4 gap-1.5">
+          {years.map((year) => {
+            const current = year === shown.year;
+            return (
+              <Button
+                key={year}
+                type="button"
+                variant={current ? "default" : "ghost"}
+                size="sm"
+                className={cn("h-9 font-normal tabular-nums", current && "font-medium")}
+                onClick={() => {
+                  setShown({ year, month: shown.month });
+                  setView("months");
+                }}
+              >
+                {formats.number.format(year)}
+              </Button>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
   if (view === "months") {
     return (
       <div className="flex flex-col gap-3">
         <div className="flex items-center gap-1">
           {navButton(t("dateField.previousYear"), () => move(-12), false)}
-          <div className="flex-1 text-center text-sm font-semibold">
+          {/* Far-off years (e.g. a birth year) are picked from a list, not by stepping. */}
+          <button
+            type="button"
+            className="flex-1 rounded-md px-2 py-1 text-center text-sm font-semibold transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
+            title={t("dateField.chooseYear")}
+            onClick={() => {
+              // The page that has the year shown, about in its middle.
+              setYearPage(shown.year - Math.floor(YEARS_PER_PAGE / 2) + 1);
+              setView("years");
+            }}
+          >
             {first ? formats.year.format(first) : formats.number.format(shown.year)}
-          </div>
+          </button>
           {navButton(t("dateField.nextYear"), () => move(12), true)}
         </div>
         <div className="grid grid-cols-3 gap-1.5">
@@ -130,19 +178,11 @@ export function CalendarPicker({
         {navButton(t("dateField.previousMonth"), () => move(-1), false)}
         <button
           type="button"
-          className="flex flex-1 flex-col items-center rounded-md px-2 py-1 transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
+          className="flex-1 rounded-md px-2 py-1 text-center text-sm font-semibold transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
           title={t("dateField.chooseMonth")}
           onClick={() => setView("months")}
         >
-          <span className="text-sm font-semibold">{first ? formats.title.format(first) : ""}</span>
-          {/* The same days in the Gregorian calendar, when another one is shown. */}
-          {calendar !== "gregory" && first && last && (
-            <span className="text-[0.7rem] text-muted-foreground">
-              {first.getUTCMonth() === last.getUTCMonth()
-                ? formats.gregorian.format(first)
-                : `${(first.getUTCFullYear() === last.getUTCFullYear() ? formats.gregorianMonth : formats.gregorian).format(first)} – ${formats.gregorian.format(last)}`}
-            </span>
-          )}
+          {first ? formats.title.format(first) : ""}
         </button>
         {navButton(t("dateField.nextMonth"), () => move(1), true)}
       </div>

@@ -7,18 +7,20 @@ import { useLanguage } from "@/i18n/use-language";
 import { CALENDAR_EVENTS_SOURCE, type CalendarEvent, type MonthEvents } from "@/lib/calendar-events";
 import { PartyHatIcon } from "@/components/party-hat-icon";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 
 type Row = { iso: string; birthday: string; event?: never } | { iso: string; event: CalendarEvent; birthday?: never };
 
 /**
  * The occasions and birthdays of the month shown on the home page's calendar,
- * day by day. Occasions (`events`) exist for the Solar Hijri calendar only;
+ * day by day, in a card of their own under it. Occasions (`events`) exist for the Solar Hijri calendar only;
  * pass null for other calendars.
  */
 export function MonthEvents({
   calendar,
   days,
-  title,
+  month,
+  year,
   events,
   birthdays,
   selected,
@@ -28,8 +30,9 @@ export function MonthEvents({
   calendar: Calendar;
   /** The month's days, as Gregorian "YYYY-MM-DD". */
   days: string[];
-  /** The month's name, e.g. "Dey 1405". */
-  title: string;
+  /** The month's name and its year, e.g. "Azar" and "1405". */
+  month: string;
+  year: string;
   events: MonthEvents | null;
   /** Names of the people whose birthday it is, per day (Gregorian "YYYY-MM-DD"). */
   birthdays: ReadonlyMap<string, string[]>;
@@ -60,8 +63,11 @@ export function MonthEvents({
   }, [days, birthdays, events]);
 
   return (
-    <section className="flex flex-col gap-2 border-t pt-3">
-      <h3 className="text-sm font-semibold">{t("calendarEvents.title", { month: title })}</h3>
+    <Card className="w-full">
+      <CardHeader>
+        <CardTitle>{t("calendarEvents.title", { month, year })}</CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-2">
 
       {events?.status === "loading" && (
         <p className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -119,11 +125,12 @@ export function MonthEvents({
         </ul>
       )}
 
+      </CardContent>
       {events && (
-        <p className="text-[0.7rem] text-muted-foreground">
+        <CardFooter className="text-[0.7rem] text-muted-foreground">
           {t("calendarEvents.source", { source: CALENDAR_EVENTS_SOURCE })}
-        </p>
+        </CardFooter>
       )}
-    </section>
+    </Card>
   );
 }

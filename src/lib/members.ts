@@ -41,3 +41,11 @@ export function createMember(member: MemberInput): Promise<CreatedMember> {
 export function setMemberBirthDate(userId: string, birthDate: string): Promise<string> {
   return invoke<string>("set_member_birth_date", { userId, birthDate });
 }
+
+/**
+ * Copies the staff's birth dates from the server to this computer (online only;
+ * offline it does nothing), so one set on another computer shows on the home calendar.
+ */
+export function refreshBirthDates(): Promise<void> {
+  return invoke<void>("refresh_birth_dates");
+}
