@@ -72,7 +72,10 @@ const MOTION = {
   pointerPush: 420,
   /** Turning speed range; `spin` shapes turn three times faster. */
   maxTurn: 10,
-  /** Shapes never pass over each other: they bounce off when this close (between their edges). */
+  /**
+   * Shapes never pass over each other: they bounce off when this close (between
+   * their edges). They keep the same distance from the edges of their area.
+   */
   gap: 12,
 } as const;
 
@@ -115,8 +118,8 @@ function startBodies(width: number, height: number): Body[] {
   });
 }
 
-/** Moves a shape by `dt` seconds: pushed by the pointer, settling, bouncing off the edges. */
-function step(body: Body, size: number, dt: number, width: number, height: number, pointer: { x: number; y: number } | null) {
+/** Moves a shape by `dt` seconds: pushed by the pointer, settling back to its cruising speed. */
+function step(body: Body, dt: number, pointer: { x: number; y: number } | null) {
   if (pointer) {
     const dx = body.x - pointer.x;
     const dy = body.y - pointer.y;
@@ -139,13 +142,22 @@ function step(body: Body, size: number, dt: number, width: number, height: numbe
   body.x += body.vx * dt;
   body.y += body.vy * dt;
   body.angle += body.turn * dt;
+}
 
-  // Bounce once half of the shape has left the screen.
-  const half = size / 2;
-  if (body.x < -half) [body.x, body.vx] = [-half, Math.abs(body.vx)];
-  if (body.x > width + half) [body.x, body.vx] = [width + half, -Math.abs(body.vx)];
-  if (body.y < -half) [body.y, body.vy] = [-half, Math.abs(body.vy)];
-  if (body.y > height + half) [body.y, body.vy] = [height + half, -Math.abs(body.vy)];
+/**
+ * Keeps a shape (taken as a disc as wide as the shape, as in `collide`) at least
+ * the gap away from every edge of its area, which ends at the sidebar and the
+ * header: one that reaches an edge is put back and bounced off it. In an area
+ * too small for it, it stays centered on that axis.
+ */
+function keepInside(body: Body, size: number, width: number, height: number) {
+  const margin = size / 2 + MOTION.gap;
+  if (width < 2 * margin) body.x = width / 2;
+  else if (body.x < margin) [body.x, body.vx] = [margin, Math.abs(body.vx)];
+  else if (body.x > width - margin) [body.x, body.vx] = [width - margin, -Math.abs(body.vx)];
+  if (height < 2 * margin) body.y = height / 2;
+  else if (body.y < margin) [body.y, body.vy] = [margin, Math.abs(body.vy)];
+  else if (body.y > height - margin) [body.y, body.vy] = [height - margin, -Math.abs(body.vy)];
 }
 
 /**
@@ -183,13 +195,17 @@ function collide(a: Body, aSize: number, b: Body, bSize: number) {
   b.vy += impulse * aMass * ny;
 }
 
-/** Every pair of shapes that touch bounces apart (`collide`). */
-function collideAll(bodies: Body[]) {
+/**
+ * Every pair of shapes that touch bounces apart (`collide`); then every shape is
+ * kept inside its area (`keepInside`), even one a collision pushed out.
+ */
+function collideAll(bodies: Body[], width: number, height: number) {
   for (let i = 0; i < bodies.length; i++) {
     for (let j = i + 1; j < bodies.length; j++) {
       collide(bodies[i], SHAPES[i].size, bodies[j], SHAPES[j].size);
     }
   }
+  bodies.forEach((body, i) => keepInside(body, SHAPES[i].size, width, height));
 }
 
 /**
@@ -197,8 +213,8 @@ function collideAll(bodies: Body[]) {
  * pages (src/pages/app-layout.tsx): two soft lights
  * moving in the logo's colours, and flat outline shapes of a dental clinic
  * (teeth, toothbrush, stethoscope, medical crosses...) drifting slowly all over
- * the screen, turning as they go, bouncing off each other instead of passing
- * over one another, and gently pushed aside by the mouse. Animated
+ * the area, turning as they go, bouncing off each other and off its edges (never
+ * under the sidebar or the header), and gently pushed aside by the mouse. Animated
  * on every frame without re-rendering; still when the system asks for reduced
  * motion. Hidden from screen readers and never takes clicks (the pointer is
  * followed on the window).
@@ -214,7 +230,7 @@ export function AuthBackdrop() {
     let height = container.clientHeight;
     const bodies = startBodies(width, height);
     // On a small screen the grid cells can be smaller than the shapes: spread out first.
-    for (let i = 0; i < 30; i++) collideAll(bodies);
+    for (let i = 0; i < 30; i++) collideAll(bodies, width, height);
 
     const draw = () =>
       bodies.forEach((body, i) => {
@@ -253,8 +269,8 @@ export function AuthBackdrop() {
       // Capped, so a long pause (a hidden window) does not make them jump.
       const dt = Math.min((now - last) / 1000, 0.05);
       last = now;
-      bodies.forEach((body, i) => step(body, SHAPES[i].size, dt, width, height, pointer));
-      collideAll(bodies);
+      bodies.forEach((body) => step(body, dt, pointer));
+      collideAll(bodies, width, height);
       draw();
       frame = requestAnimationFrame(tick);
     };

@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Outlet } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
+import { BirthdayConfetti } from "@/components/birthday-confetti";
 import { ConnectivityIndicator } from "@/components/connectivity-indicator";
 import { HeaderClock } from "@/components/header-clock";
 import { SettingsDialog } from "@/components/settings-dialog";
@@ -48,6 +49,7 @@ export function RootLayout() {
           <Outlet />
         )}
       </main>
+      <BirthdayConfetti />
     </div>
   );
 }

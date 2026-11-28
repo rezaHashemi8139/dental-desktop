@@ -1,38 +1,39 @@
 import { useMemo, type ReactNode } from "react";
 import { BellIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { localIsoDate, useCalendar } from "@/i18n/calendar";
 import { useSession } from "@/auth/store";
-import { dayBirthdays, useBirthdayPeople } from "@/lib/birthdays";
-import { useClock } from "@/lib/network-clock";
+import { useTodayBirthdays } from "@/lib/birthdays";
 import { nextIsoDay, useReminders } from "@/lib/reminders";
-import { PartyHatIcon } from "@/components/party-hat-icon";
+import { ColorfulPartyHat, PartyHatIcon } from "@/components/party-hat-icon";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 /**
  * Small icons in the header while someone is logged in: a bell when the user has
  * reminders today and a party hat when it is someone's birthday, each listing
- * them in a tooltip. Nothing when there are neither.
+ * them in a tooltip; on the user's own birthday, a "Happy birthday" too.
+ * Nothing when there are none.
  */
 export function TodayIndicators() {
   const { t } = useTranslation();
   const session = useSession();
-  const { calendar } = useCalendar();
-  const clock = useClock();
-  const today = localIsoDate(clock.now);
   const usable = !!session && !session.locked && !session.billing;
+  const birthdays = useTodayBirthdays();
+  const { today } = birthdays;
 
   const range = useMemo(() => (usable ? { fromDay: today, toDay: nextIsoDay(today) } : null), [usable, today]);
   const reminders = useReminders(range).get(today) ?? [];
-  const people = useBirthdayPeople();
-  const birthdays = useMemo(
-    () => (usable ? dayBirthdays(people, today, calendar) : []),
-    [usable, people, today, calendar],
-  );
 
   if (!usable) return null;
   return (
     <>
+      {birthdays.mine && (
+        <span className="inline-flex items-center gap-1 text-xs font-semibold">
+          <ColorfulPartyHat className="size-4" />
+          <span className="bg-linear-to-r from-pink-500 via-amber-500 to-sky-500 bg-clip-text text-transparent">
+            {t("calendarEvents.happyBirthday")}
+          </span>
+        </span>
+      )}
       {reminders.length > 0 && (
         <Indicator
           icon={<BellIcon />}
@@ -40,11 +41,11 @@ export function TodayIndicators() {
           lines={reminders.map((reminder) => reminder.text)}
         />
       )}
-      {birthdays.length > 0 && (
+      {birthdays.people.length > 0 && (
         <Indicator
           icon={<PartyHatIcon />}
           title={t("reminders.birthdaysToday")}
-          lines={birthdays.map((name) => t("calendarEvents.birthday", { name }))}
+          lines={birthdays.people.map((person) => t("calendarEvents.birthday", { name: person.name }))}
         />
       )}
     </>

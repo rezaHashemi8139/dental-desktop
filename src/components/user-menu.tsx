@@ -4,6 +4,8 @@ import { useTranslation } from "react-i18next";
 import { lockSession, type Session } from "@/auth/session";
 import { setSession } from "@/auth/store";
 import { useLogout } from "@/auth/use-logout";
+import { useTodayBirthdays } from "@/lib/birthdays";
+import { ColorfulPartyHat } from "@/components/party-hat-icon";
 import { ProfileDialog } from "@/components/profile-dialog";
 import { Button } from "@/components/ui/button";
 import {
@@ -34,6 +36,7 @@ export function UserMenu({ session }: { session: Session }) {
   const { t } = useTranslation();
   const [profileOpen, setProfileOpen] = useState(false);
   const [logoutOpen, setLogoutOpen] = useState(false);
+  const birthday = useTodayBirthdays().mine;
 
   async function lock() {
     try {
@@ -53,7 +56,7 @@ export function UserMenu({ session }: { session: Session }) {
             className="h-auto w-full justify-start gap-2.5 px-2 py-2 text-start data-[state=open]:bg-muted"
             aria-label={t("account.menu.label")}
           >
-            <UserAvatar session={session} />
+            <UserAvatar session={session} birthday={birthday} />
             <span className="flex min-w-0 flex-1 flex-col">
               <span className="truncate font-medium">{session.fullName || session.username}</span>
               <span dir="ltr" className="truncate text-xs font-normal text-muted-foreground rtl:text-end">
@@ -88,18 +91,30 @@ export function UserMenu({ session }: { session: Session }) {
   );
 }
 
-/** The first letter of the user's name, on the logo's colours. */
-export function UserAvatar({ session, className }: { session: Session; className?: string }) {
+/** The first letter of the user's name, on the logo's colours; with a party hat on their birthday. */
+export function UserAvatar({
+  session,
+  birthday = false,
+  className,
+}: {
+  session: Session;
+  birthday?: boolean;
+  className?: string;
+}) {
   const initial = [...(session.fullName.trim() || session.username)][0]?.toUpperCase() ?? "";
   return (
     <span
       aria-hidden
       className={cn(
-        "flex size-8 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-brand-start to-brand-end text-sm font-semibold text-primary-foreground",
+        "relative flex size-8 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-brand-start to-brand-end text-sm font-semibold text-primary-foreground",
         className,
       )}
     >
       {initial}
+      {birthday && (
+        // Worn at an angle, on the top of the circle.
+        <ColorfulPartyHat className="absolute -top-3.5 -inset-e-1.5 size-5 rotate-20 drop-shadow-sm rtl:-rotate-20" />
+      )}
     </span>
   );
 }

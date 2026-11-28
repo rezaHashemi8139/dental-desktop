@@ -729,6 +729,7 @@
     "none": "برای این ماه مناسبتی ثبت نشده است.",
     "holiday": "تعطیل",
     "birthday": "تولد {{name}}",
+    "happyBirthday": "تولدت مبارک!",
     "source": "منبع: {{source}}"
   },
   "reminders": {
