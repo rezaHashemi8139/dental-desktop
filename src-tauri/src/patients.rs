@@ -273,7 +273,7 @@ pub fn get_patient(db: &Connection, id: &[u8]) -> Result<Option<PatientRecord>, 
 ///   already here, updates them (the same person is never stored twice).
 /// - With `id` (hex): updates that patient. Their identity may change only while
 ///   the server has never stored them (a typo caught early); the patient then gets
-///   the id of the new identity, and their treatments follow.
+///   the id of the new identity, and their treatments and payments follow.
 pub fn save_patient(db: &Connection, id: Option<&str>, input: &PatientInput, now: i64) -> Result<PatientRecord, Message> {
     let patient = check_patient(input)?;
     let tx = db.unchecked_transaction().map_err(internal)?;
@@ -301,6 +301,9 @@ pub fn save_patient(db: &Connection, id: Option<&str>, input: &PatientInput, now
                     params![current, patient.id, now],
                 )
                 .map_err(internal)?;
+                // Local only (payments.rs): nothing to sync.
+                tx.execute("UPDATE patient_payments SET patient_id = ?2 WHERE patient_id = ?1", params![current, patient.id])
+                    .map_err(internal)?;
             }
             patient.id
         }

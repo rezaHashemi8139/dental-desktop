@@ -4,7 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { ClockIcon, LoaderCircleIcon, PlusIcon, XIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { workHoursSchema, type WorkHoursFormValues, type WorkHoursValues } from "@/auth/schemas";
-import { localIsoDate } from "@/i18n/calendar";
+import { atLocalTime, localIsoDate, localTimeOfDay } from "@/i18n/calendar";
 import { toRustMessage, translateMessage, type RustMessage } from "@/i18n/message";
 import { fieldError } from "@/lib/form";
 import { listWorkHours, localMidnight, nextDay, replaceWorkDay, type EntryTimes } from "@/lib/work-hours";
@@ -94,8 +94,8 @@ function DayForm({
         if (!current) return;
         replace(
           found.entries.map((entry) => ({
-            start: timeOfDay(entry.startedAt),
-            end: entry.endedAt ? timeOfDay(entry.endedAt) : "",
+            start: localTimeOfDay(entry.startedAt),
+            end: entry.endedAt ? localTimeOfDay(entry.endedAt) : "",
           })),
         );
         setLoadedDay(day);
@@ -110,7 +110,7 @@ function DayForm({
   const isToday = !!day && day === localIsoDate(Date.now());
 
   function fillNow(index: number, field: "start" | "end") {
-    setValue(`rows.${index}.${field}`, timeOfDay(Date.now()), { shouldValidate: true });
+    setValue(`rows.${index}.${field}`, localTimeOfDay(Date.now()), { shouldValidate: true });
   }
 
   /** Another row, starting where the last one ended. */
@@ -125,9 +125,9 @@ function DayForm({
     setError(null);
     const midnight = localMidnight(nextDay(loadedDay));
     const entries: EntryTimes[] = values.rows.map((row) => ({
-      startedAt: atTime(loadedDay, row.start),
+      startedAt: atLocalTime(loadedDay, row.start),
       // "00:00" is midnight at the day's end.
-      endedAt: row.end === "" ? null : row.end === "00:00" ? midnight : atTime(loadedDay, row.end),
+      endedAt: row.end === "" ? null : row.end === "00:00" ? midnight : atLocalTime(loadedDay, row.end),
     }));
     try {
       await replaceWorkDay(userId, loadedDay, entries);
@@ -278,17 +278,4 @@ function TimeInput({
       )}
     </div>
   );
-}
-
-/** A timestamp's local time of day as "HH:MM" (midnight is "00:00"). */
-function timeOfDay(time: number): string {
-  const date = new Date(time);
-  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
-}
-
-/** Local time `hhmm` on the Gregorian day `iso`. */
-function atTime(iso: string, hhmm: string): number {
-  const [year, month, day] = iso.split("-").map(Number);
-  const [hours, minutes] = hhmm.split(":").map(Number);
-  return new Date(year, month - 1, day, hours, minutes).getTime();
 }

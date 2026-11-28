@@ -1,17 +1,20 @@
 import { useMemo, useRef, useState } from "react";
-import { XIcon } from "lucide-react";
+import { CalendarDaysIcon, XIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { calendarParts, fromGregorian, toGregorian, useCalendar, type Calendar } from "@/i18n/calendar";
 import { useLanguage } from "@/i18n/use-language";
 import { latinKeyDown, latinPaste } from "@/lib/latin-input";
+import { CalendarPicker } from "@/components/calendar-picker";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 /**
  * A day typed in the calendar chosen in Settings (Solar Hijri, Gregorian or Lunar
- * Hijri), kept as a Gregorian "YYYY-MM-DD" (see src/i18n/calendar.ts).
+ * Hijri), kept as a Gregorian "YYYY-MM-DD" (see src/i18n/calendar.ts). The day
+ * can be picked from the lists or from a month grid (CalendarPicker).
  *
  * `value` is "" when nothing is entered, and `onChange` gets null while the day
  * is incomplete or does not exist, so a form can tell it apart from an empty one.
@@ -36,6 +39,7 @@ export function DateField({
   const { language } = useLanguage();
   const { calendar } = useCalendar();
   const [parts, setParts] = useState(() => toText(value, calendar));
+  const [picking, setPicking] = useState(false);
   // What this field last reported, to notice a value set from outside (e.g. filled in by the form).
   const reported = useRef(value);
   if (value !== reported.current && value !== null) {
@@ -109,6 +113,30 @@ export function DateField({
           onPaste={latinPaste}
           onChange={(e) => update({ ...parts, year: e.target.value.replace(/[^0-9]/g, "") })}
         />
+        <Popover open={picking} onOpenChange={setPicking}>
+          <PopoverTrigger asChild>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              className="shrink-0 text-muted-foreground"
+              aria-label={t("dateField.openCalendar")}
+              title={t("dateField.openCalendar")}
+            >
+              <CalendarDaysIcon />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-auto p-3">
+            <CalendarPicker
+              value={value}
+              calendar={calendar}
+              onSelect={(iso) => {
+                update(toText(iso, calendar));
+                setPicking(false);
+              }}
+            />
+          </PopoverContent>
+        </Popover>
         {clearable && (parts.year || parts.month || parts.day) && (
           <Button
             type="button"

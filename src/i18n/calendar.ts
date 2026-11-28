@@ -147,6 +147,19 @@ export function localIsoDate(date: Date | number): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+/** A timestamp's local time of day as "HH:MM", 24 hours (midnight is "00:00"). */
+export function localTimeOfDay(time: Date | number): string {
+  const date = new Date(time);
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+/** Local time `hhmm` ("HH:MM") on the Gregorian day `iso` ("YYYY-MM-DD"), as unix milliseconds. */
+export function atLocalTime(iso: string, hhmm: string): number {
+  const [year, month, day] = iso.split("-").map(Number);
+  const [hours, minutes] = hhmm.split(":").map(Number);
+  return new Date(year, month - 1, day, hours, minutes).getTime();
+}
+
 /**
  * Formats a timestamp in the current language and calendar, e.g.
  * `formatDate(date, { dateStyle: "medium", timeStyle: "short" })`.

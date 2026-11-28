@@ -262,6 +262,21 @@ const MIGRATIONS: &[Migration] = &[
     Migration::Sql("ALTER TABLE patients ADD COLUMN email TEXT NOT NULL DEFAULT '';"),
     // 6: notes per day of working hours (work_hours.rs). Local only.
     Migration::Code(work_day_notes),
+    // 7: payments received from patients and refunds paid back (payments.rs). Financial: local only.
+    Migration::Sql("CREATE TABLE patient_payments (
+        id          BLOB PRIMARY KEY,     -- random, 16 bytes
+        patient_id  BLOB NOT NULL,        -- patients.id
+        kind        TEXT NOT NULL,        -- 'payment' (received) or 'refund' (paid back)
+        amount      REAL NOT NULL,        -- stored amount (src/i18n/currency.ts), always positive
+        method      TEXT NOT NULL,        -- one of payments::METHODS
+        paid_at     INTEGER NOT NULL,     -- unix milliseconds: when it was received or paid back
+        reference   TEXT NOT NULL DEFAULT '',  -- tracking code, cheque number...; '' for none
+        notes       TEXT NOT NULL DEFAULT '',
+        recorded_by BLOB NOT NULL,        -- server user id (users.id) of who recorded it
+        created_at  INTEGER NOT NULL,     -- unix milliseconds
+        updated_at  INTEGER NOT NULL      -- unix milliseconds
+    );
+    CREATE INDEX patient_payments_patient ON patient_payments (patient_id, paid_at);"),
 ];
 
 /// Migration 6: the users' notes per day of working hours. An early build's
@@ -337,7 +352,7 @@ pub const SYNCED_TABLES: &[&str] = &["patients", "treatments"];
 /// Every table must be in exactly one of the two lists; a test checks it, so a
 /// new table cannot be added without deciding whether it is synced.
 #[allow(dead_code)] // Read by the test that checks every table is classified.
-pub const LOCAL_ONLY_TABLES: &[&str] = &["users", "sync_cursors", "work_hours", "work_day_notes"];
+pub const LOCAL_ONLY_TABLES: &[&str] = &["users", "sync_cursors", "work_hours", "work_day_notes", "patient_payments"];
 
 /// The schema version this app writes: how many migrations it has.
 pub fn latest_schema_version() -> i64 {

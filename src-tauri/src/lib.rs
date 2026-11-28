@@ -11,6 +11,7 @@ mod lockdown;
 mod members;
 mod message;
 mod patients;
+mod payments;
 mod person;
 mod profile;
 mod proto;
@@ -276,6 +277,31 @@ fn clock_out(
 #[tauri::command]
 fn delete_work_hours(state: State<'_, AuthState>, id: String) -> Result<(), Message> {
     with_session(&state, |session| work_hours::delete(&session.db, &session.info, &id))
+}
+
+// --- Patient payments and refunds (payments.rs): financial, local only -----
+
+/// A patient's payments and refunds, newest first, with their totals.
+#[tauri::command]
+fn list_payments(state: State<'_, AuthState>, patient_id: String) -> Result<payments::PaymentList, Message> {
+    with_session(&state, |session| payments::list(&session.db, &patient_id))
+}
+
+/// Records (no `id`) or changes a payment or refund.
+#[tauri::command]
+fn save_payment(
+    state: State<'_, AuthState>,
+    id: Option<String>,
+    payment: payments::PaymentInput,
+) -> Result<payments::PaymentRecord, Message> {
+    with_session(&state, |session| {
+        payments::save(&session.db, &session.info, id.as_deref(), &payment, clock::now_millis())
+    })
+}
+
+#[tauri::command]
+fn delete_payment(state: State<'_, AuthState>, id: String) -> Result<(), Message> {
+    with_session(&state, |session| payments::delete(&session.db, &session.info, &id))
 }
 
 /// Adds a user to the clinic on the server (members.rs), then to this computer's
@@ -1115,6 +1141,9 @@ pub fn run() {
             delete_work_hours,
             save_work_day_note,
             work_hours_summary,
+            list_payments,
+            save_payment,
+            delete_payment,
             create_member,
             languages::get_language_catalog,
             languages::list_installed_languages,

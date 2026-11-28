@@ -4,6 +4,12 @@ import { MIN_PASSWORD_LENGTH, USERNAME_PATTERN } from "./session";
 import { IDENTITY_CODE_PATTERN, LICENSE_NUMBER_PATTERN, PHONE_PATTERN, POSTAL_CODE_PATTERN } from "./setup";
 import { isRecoveryKeyFormat } from "@/lib/backup";
 import { CARD_LAST4_PATTERN, PAYMENT_REFERENCE_PATTERN } from "@/lib/billing";
+import {
+  PAYMENT_KINDS,
+  PAYMENT_METHODS,
+  PATIENT_PAYMENT_REFERENCE_MAX,
+  PATIENT_PAYMENT_REFERENCE_PATTERN,
+} from "@/lib/payments";
 
 /**
  * Form rules. Error messages are translation keys, translated while rendering
@@ -282,3 +288,36 @@ export const memberSchema = z.object({
   temporaryPassword: newPassword,
 });
 export type MemberValues = z.infer<typeof memberSchema>;
+
+// --- Patient payments and refunds (src/components/payment-dialog.tsx) ------
+
+/** Rust checks everything again (src-tauri/src/payments.rs). */
+export const patientPaymentSchema = z.object({
+  kind: z.enum(PAYMENT_KINDS),
+  paidOn: z
+    .string()
+    .nullable()
+    .refine((v) => !!v, message("payments.errors.invalidDate")),
+  /** "HH:MM", 24 hours. */
+  paidTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, message("payments.errors.invalidTime")),
+  /** A stored amount from <MoneyInput>; null while empty. */
+  amount: z
+    .number()
+    .nullable()
+    .refine((v) => v !== null && v > 0, message("payments.errors.invalidAmount")),
+  method: z.enum(PAYMENT_METHODS),
+  // Spaces are dropped, as Rust does.
+  reference: z
+    .string()
+    .transform((v) => v.replace(/\s/g, ""))
+    .pipe(
+      z
+        .string()
+        .max(PATIENT_PAYMENT_REFERENCE_MAX, message("payments.errors.invalidReference"))
+        .regex(PATIENT_PAYMENT_REFERENCE_PATTERN, message("payments.errors.invalidReference")),
+    ),
+  notes: z.string().trim(),
+});
+/** As the form holds them (the date may be null while being typed). */
+export type PatientPaymentFormValues = z.input<typeof patientPaymentSchema>;
+export type PatientPaymentValues = z.infer<typeof patientPaymentSchema>;
